@@ -10,20 +10,18 @@ import race
 import render
 import track
 import train
+import ui
 
-TRACK_GEN = "track"
 TRAINING = "training"
 SHOWCASE = "showcase"
 DONE = "done"
 
-HELP = [
-    "R  новый раунд",
-    "T  новая трасса",
-    "S  показательный заезд",
-    "N  мозг с нуля / продолжить",
-    "1 2 3 4  скорость",
-    "пробел  пауза",
-]
+STATE_NAME = {TRAINING: "обучение", SHOWCASE: "показательный заезд", DONE: "заезд окончен"}
+SPEED_NAMES = ("x1", "x5", "x20", "без отрисовки")
+BRAIN_NAMES = ("с нуля", "продолжить")
+
+STATS_H = 216
+GRAPH_H = 96
 
 
 class Game:
@@ -33,30 +31,44 @@ class Game:
         self.screen = pygame.display.set_mode((cfg.WINDOW_W, cfg.WINDOW_H))
         self.clock = pygame.time.Clock()
         self.view = pygame.Rect(0, 0, cfg.WINDOW_W - cfg.PANEL_W, cfg.WINDOW_H)
-        self.panel = pygame.Rect(self.view.width, 0, cfg.PANEL_W, cfg.WINDOW_H)
+        self.panel_rect = pygame.Rect(self.view.width, 0, cfg.PANEL_W, cfg.WINDOW_H)
         self.font = pygame.font.SysFont("consolas", 15)
         self.big = pygame.font.SysFont("consolas", 21, bold=True)
 
         self.rng = np.random.default_rng(seed)
-        self.settings = {
-            "pop_size": cfg.POP_SIZE,
-            "generations": cfg.MAX_GENERATIONS,
-            "mut_sigma": cfg.MUT_SIGMA,
-            "elite_frac": cfg.ELITE_FRAC,
-            "width": cfg.TRACK_WIDTH,
-            "difficulty": cfg.DIFFICULTY,
-        }
-        self.speed_idx = 0
+        self.build_panel()
         self.paused = False
-        self.keep_brain = False
         self.best_brain = None
         self.rounds = 0
         self.running = True
         self.new_round(new_car=True)
 
+    def build_panel(self):
+        p = ui.Panel(self.panel_rect, self.font)
+        p.skip(STATS_H)
+        p.graph("graph", GRAPH_H)
+        p.skip(6)
+        p.slider("pop_size", "популяция", 10, 120, cfg.POP_SIZE, integer=True)
+        p.slider("generations", "поколений", 5, 120, cfg.MAX_GENERATIONS, integer=True)
+        p.slider("mut_sigma", "мутация", 0.01, 0.6, cfg.MUT_SIGMA)
+        p.slider("elite_frac", "элита", 0.0, 0.4, cfg.ELITE_FRAC)
+        p.slider("width", "ширина трассы", 25, 80, cfg.TRACK_WIDTH, integer=True)
+        p.slider("difficulty", "сложность", 0.0, 1.0, cfg.DIFFICULTY)
+        p.skip(4)
+        p.toggle("speed", "скорость показа", SPEED_NAMES)
+        p.toggle("brain", "мозг", BRAIN_NAMES)
+        p.skip(4)
+        p.buttons([("round", "новый раунд"), ("track", "новая трасса")])
+        p.buttons([("show", "заезд"), ("pause", "пауза")])
+        self.ui = p
+
     @property
     def speed(self):
-        return cfg.SPEED_STEPS[self.speed_idx]
+        return cfg.SPEED_STEPS[self.ui.widgets["speed"].index]
+
+    @property
+    def keep_brain(self):
+        return self.ui.widgets["brain"].index == 1
 
     def splash(self, text):
         self.screen.fill(render.BG)
@@ -66,23 +78,25 @@ class Game:
 
     def new_round(self, new_car=True):
         self.splash("генерация трассы...")
-        self.track = track.evolve_track(self.rng, self.settings["width"], self.settings["difficulty"])
+        self.track = track.evolve_track(self.rng, self.ui.value("width"), self.ui.value("difficulty"))
         self.field = field.build_for_track(self.track)
         if new_car or not hasattr(self, "car"):
             self.car = car.random_car(self.rng)
         self.camera = render.Camera(self.view, self.track.lo, self.track.hi)
 
-        n = self.settings["pop_size"]
+        n = self.ui.value("pop_size")
         if self.keep_brain and self.best_brain is not None:
-            self.brains = np.tile(self.best_brain, (n, 1))
-            self.brains[1:] = evolution.evolve(self.brains, np.arange(n, dtype=float), self.rng,
-                                               elite_frac=1.0 / n)[1:]
+            seeded = np.tile(self.best_brain, (n, 1))
+            self.brains = evolution.evolve(seeded, np.arange(n, dtype=float), self.rng,
+                                           elite_frac=1.0 / n,
+                                           mut_sigma=self.ui.value("mut_sigma"))
         else:
             self.brains = evolution.random_population(n, brain.genome_size(), self.rng)
 
         self.gen = 0
         self.history = []
         self.rounds += 1
+        self.paused = False
         self.state = TRAINING
         self.race = race.Race(self.track, self.field, self.car, self.brains)
 
@@ -91,13 +105,13 @@ class Game:
         self.history.append(train.gen_stats(self.gen, self.race))
         self.best_brain = self.brains[int(np.argmax(fit))].copy()
 
-        if self.race.n_finished or self.gen + 1 >= self.settings["generations"]:
+        if self.race.n_finished or self.gen + 1 >= self.ui.value("generations"):
             self.start_showcase()
             return
 
         self.brains = evolution.evolve(self.brains, fit, self.rng,
-                                       elite_frac=self.settings["elite_frac"],
-                                       mut_sigma=self.settings["mut_sigma"])
+                                       elite_frac=self.ui.value("elite_frac"),
+                                       mut_sigma=self.ui.value("mut_sigma"))
         self.gen += 1
         self.race = race.Race(self.track, self.field, self.car, self.brains)
 
@@ -106,10 +120,9 @@ class Game:
         self.race = race.Race(self.track, self.field, self.car, self.best_brain[None, :])
 
     def advance(self):
-        if self.paused:
+        if self.paused or self.state == DONE:
             return
-        steps = self.speed or cfg.STEPS_PER_GEN
-        for _ in range(steps):
+        for _ in range(self.speed or cfg.STEPS_PER_GEN):
             if self.race.done:
                 break
             self.race.step()
@@ -118,7 +131,7 @@ class Game:
             return
         if self.state == TRAINING:
             self.next_generation()
-        elif self.state == SHOWCASE:
+        else:
             self.state = DONE
 
     def key(self, code):
@@ -132,10 +145,18 @@ class Game:
             self.new_round(new_car=False)
         elif code == pygame.K_s and self.best_brain is not None:
             self.start_showcase()
-        elif code == pygame.K_n:
-            self.keep_brain = not self.keep_brain
         elif pygame.K_1 <= code <= pygame.K_4:
-            self.speed_idx = code - pygame.K_1
+            self.ui.widgets["speed"].index = code - pygame.K_1
+
+    def apply_buttons(self):
+        if self.ui.clicked("round"):
+            self.new_round(new_car=True)
+        if self.ui.clicked("track"):
+            self.new_round(new_car=False)
+        if self.ui.clicked("show") and self.best_brain is not None:
+            self.start_showcase()
+        if self.ui.clicked("pause"):
+            self.paused = not self.paused
 
     def draw_field(self):
         if self.state in (SHOWCASE, DONE):
@@ -153,68 +174,40 @@ class Game:
             render.draw_rays(self.screen, self.camera, self.race.pos[leader],
                              self.race.angle[leader], rays)
 
-    def draw_graph(self, top, height):
-        box = pygame.Rect(self.panel.left + 14, top, cfg.PANEL_W - 28, height)
-        pygame.draw.rect(self.screen, render.BG, box)
-        pygame.draw.rect(self.screen, render.MIDLINE, box, 1)
-        if len(self.history) < 2:
-            return
-        best = np.array([s.best for s in self.history])
-        mean = np.array([s.mean for s in self.history])
-        top_value = max(best.max() * 1.08, 1.0)
-        xs = np.linspace(box.left, box.right, len(best))
-        for values, colour in ((mean, render.TEXT_DIM), (best, render.LEADER_RING)):
-            pts = [(x, box.bottom - v / top_value * box.height) for x, v in zip(xs, values)]
-            pygame.draw.lines(self.screen, colour, False, pts, 2)
+    def draw_stats(self):
+        x = self.panel_rect.left + self.ui.pad
+        y = self.panel_rect.top + self.ui.pad
 
-    def draw_panel(self):
-        pygame.draw.rect(self.screen, render.PANEL_BG, self.panel)
-        x = self.panel.left + 14
-        y = 16
-
-        def line(text, colour=render.TEXT, step=20):
+        def line(text, colour=render.TEXT, step=19):
             nonlocal y
             self.screen.blit(self.font.render(text, True, colour), (x, y))
             y += step
 
-        state = {TRAINING: "обучение", SHOWCASE: "показательный заезд",
-                 DONE: "заезд окончен", TRACK_GEN: "генерация"}[self.state]
-        self.screen.blit(self.big.render(state, True, render.TEXT), (x, y))
-        y += 34
-        if self.paused:
-            line("ПАУЗА", render.LEADER_RING)
+        title = "ПАУЗА" if self.paused else STATE_NAME[self.state]
+        colour = render.LEADER_RING if self.paused else render.TEXT
+        self.screen.blit(self.big.render(title, True, colour), (x, y))
+        y += 30
 
+        last = self.history[-1] if self.history else None
         line(f"раунд {self.rounds}   поколение {self.gen}", render.TEXT_DIM)
         line(f"живых    {self.race.n_alive} / {self.race.n}")
         line(f"чекпоинт {int(self.race.cp.max())} / {self.track.n_checkpoints - 1}")
-        if self.history:
-            last = self.history[-1]
-            line(f"лучший   {last.best:.0f}")
-            line(f"средний  {last.mean:.0f}")
-            line(f"доехало  {last.finished}")
-            if last.best_time:
-                line(f"время    {last.best_time:.1f} с", render.LEADER_RING)
-        y += 8
+        line(f"лучший   {last.best:.0f}" if last else "лучший   -")
+        line(f"средний  {last.mean:.0f}" if last else "средний  -")
+        line(f"доехало  {last.finished}" if last else "доехало  -")
+        if last and last.best_time:
+            line(f"время    {last.best_time:.1f} с", render.LEADER_RING)
 
-        self.draw_graph(y, 110)
-        y += 124
+        y = self.panel_rect.top + STATS_H - 38
+        line(f"трасса {self.track.length:.0f} px  поворот {self.track.min_radius:.0f}", render.TEXT_DIM, 17)
+        line(f"машина {self.car.max_speed:.0f} px/s руль {self.car.max_steer:.2f}", render.TEXT_DIM, 17)
+        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - 30, y - 16), 1.2)
 
-        line("трасса", render.TEXT_DIM)
-        line(f"длина {self.track.length:.0f}  поворот {self.track.min_radius:.0f}")
-        line(f"ширина {self.track.width:.0f}  интерес {self.track.variety:.0f}")
-        y += 8
-        line("машинка", render.TEXT_DIM)
-        line(f"скорость {self.car.max_speed:.0f}  руль {self.car.max_steer:.2f}")
-        line(f"масса {self.car.mass:.2f}  {self.car.length:.0f} на {self.car.width:.0f}")
-        render.draw_car_badge(self.screen, self.car, (self.panel.right - 40, y - 30), 1.6)
-        y += 8
-
-        speed = "без отрисовки" if self.speed == 0 else f"x{self.speed}"
-        line(f"скорость показа {speed}", render.TEXT_DIM)
-        line(f"мозг {'продолжить' if self.keep_brain else 'с нуля'}", render.TEXT_DIM)
-        y += 8
-        for row in HELP:
-            line(row, render.TEXT_DIM, 18)
+    def draw_panel(self):
+        pygame.draw.rect(self.screen, render.PANEL_BG, self.panel_rect)
+        self.draw_stats()
+        self.ui.widgets["graph"].draw(self.screen, self.history)
+        self.ui.draw(self.screen)
 
     def run(self):
         while self.running:
@@ -223,6 +216,9 @@ class Game:
                     self.running = False
                 elif event.type == pygame.KEYDOWN:
                     self.key(event.key)
+                else:
+                    self.ui.handle(event)
+            self.apply_buttons()
 
             self.advance()
             self.screen.fill(render.BG)
