@@ -51,7 +51,7 @@ class Camera:
 
 
 def _poly(cam, pts):
-    return [(int(x), int(y)) for x, y in cam.to_screen(pts)]
+    return cam.to_screen(pts).astype(np.int32).tolist()
 
 
 def draw_track(surf, cam, trk):
@@ -92,11 +92,11 @@ def _darker(colour, k=0.45):
 
 
 def draw_one_car(surf, cam, veh, pos, angle, body, wheel, glass=None):
-    for w in veh.wheels:
-        pygame.draw.polygon(surf, wheel, _poly(cam, car_polygon(w, pos, angle)))
-    pygame.draw.polygon(surf, body, _poly(cam, car_polygon(veh.shape, pos, angle)))
-    if glass is not None:
-        pygame.draw.polygon(surf, glass, _poly(cam, car_polygon(veh.cockpit, pos, angle)))
+    pts = _poly(cam, car_polygon(veh.stacked, pos, angle))
+    colours = [wheel] * 4 + [body, glass]
+    for (start, end), colour in zip(veh.slices, colours):
+        if colour is not None:
+            pygame.draw.polygon(surf, colour, pts[start:end])
 
 
 def draw_cars(surf, cam, r, veh, leader=None):
@@ -133,8 +133,6 @@ def draw_rays(surf, cam, pos, angle, rays):
 
 
 def draw_car_badge(surf, veh, at, scale):
-    at = np.asarray(at, dtype=float)
-    for piece, colour in [(w, WHEEL) for w in veh.wheels] + [(veh.shape, veh.color),
-                                                             (veh.cockpit, GLASS)]:
-        pts = piece * scale + at
-        pygame.draw.polygon(surf, colour, [(int(x), int(y)) for x, y in pts])
+    pts = (veh.stacked * scale + np.asarray(at, dtype=float)).astype(np.int32).tolist()
+    for (start, end), colour in zip(veh.slices, [WHEEL] * 4 + [veh.color, GLASS]):
+        pygame.draw.polygon(surf, colour, pts[start:end])

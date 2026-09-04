@@ -76,6 +76,10 @@ class Car:
         self.shape = shape
         self.wheels = wheels
         self.cockpit = cockpit
+        self.parts = list(wheels) + [shape, cockpit]
+        self.stacked = np.vstack(self.parts)
+        edges = np.cumsum([0] + [len(part) for part in self.parts])
+        self.slices = list(zip(edges[:-1], edges[1:]))
         self.mass = mass
         self.accel = accel
         self.max_speed = max_speed
