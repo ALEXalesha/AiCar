@@ -75,4 +75,4 @@ def generate(genome):
 
 
 def random_car(rng):
-    return generate(cppn.random_genome(cfg.CAR_CPPN_LAYERS, rng))
+    return generate(cppn.random_genome(cfg.CAR_CPPN_LAYERS, rng, cfg.CAR_INIT_SCALE))

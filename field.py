@@ -23,7 +23,9 @@ class Field:
         return np.where(inside, self.values[np.clip(ix, 0, nx - 1), np.clip(iy, 0, ny - 1)], OUTSIDE)
 
 
-def build(center, half_width, cell=cfg.FIELD_CELL, pad=cfg.FIELD_PAD):
+def build(center, half_width, cell=None, pad=None):
+    cell = cfg.FIELD_CELL if cell is None else cell
+    pad = cfg.FIELD_PAD if pad is None else pad
     lo = center.min(axis=0) - half_width - pad
     hi = center.max(axis=0) + half_width + pad
     nx = int(np.ceil((hi[0] - lo[0]) / cell)) + 1
@@ -42,5 +44,5 @@ def build(center, half_width, cell=cfg.FIELD_CELL, pad=cfg.FIELD_PAD):
     return Field((half_width - dist).reshape(nx, ny), lo, cell)
 
 
-def build_for_track(trk, cell=cfg.FIELD_CELL, pad=cfg.FIELD_PAD):
+def build_for_track(trk, cell=None, pad=None):
     return build(trk.center, trk.half, cell, pad)

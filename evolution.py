@@ -21,8 +21,12 @@ def mutate(genome, rng, sigma, rate):
     return genome + mask * rng.normal(0.0, sigma, len(genome))
 
 
-def evolve(pop, fitness, rng, elite_frac=cfg.ELITE_FRAC, mut_sigma=cfg.MUT_SIGMA,
-           mut_rate=cfg.MUT_RATE, tournament_k=cfg.TOURNAMENT_K):
+def evolve(pop, fitness, rng, elite_frac=None, mut_sigma=None,
+           mut_rate=None, tournament_k=None):
+    elite_frac = cfg.ELITE_FRAC if elite_frac is None else elite_frac
+    mut_sigma = cfg.MUT_SIGMA if mut_sigma is None else mut_sigma
+    mut_rate = cfg.MUT_RATE if mut_rate is None else mut_rate
+    tournament_k = cfg.TOURNAMENT_K if tournament_k is None else tournament_k
     n, g = pop.shape
     if float(np.ptp(fitness)) < 1e-9:
         return random_population(n, g, rng, float(np.std(pop)) or 1.0)

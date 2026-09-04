@@ -20,7 +20,9 @@ def smooth_closed(pts, w):
     return np.stack([x, y], axis=1)
 
 
-def centerline(genome, n_points=cfg.TRACK_POINTS, smooth_window=cfg.SMOOTH_WINDOW):
+def centerline(genome, n_points=None, smooth_window=None):
+    n_points = cfg.TRACK_POINTS if n_points is None else n_points
+    smooth_window = cfg.SMOOTH_WINDOW if smooth_window is None else smooth_window
     pts = cppn.ring_shape(genome, cfg.TRACK_CPPN_LAYERS, n_points, cfg.R_MIN, cfg.R_MAX)
     return smooth_closed(pts, smooth_window)
 
@@ -82,6 +84,26 @@ def any_self_intersection(poly, step=4):
     return bool(np.any(hit & ~neighbour))
 
 
+def smooth_signal(v, w):
+    if w <= 1:
+        return v.copy()
+    ext = np.concatenate([v[-w:], v, v[:w]])
+    return np.convolve(ext, np.ones(w) / w, mode="same")[w:-w]
+
+
+def shape_variety(pts):
+    r = np.linalg.norm(pts - pts.mean(axis=0), axis=1)
+    return float(r.std() / (r.mean() + 1e-9))
+
+
+def corner_variety(pts):
+    return float(smooth_signal(curvature(pts), cfg.CURVATURE_WINDOW).std())
+
+
+def interest(pts):
+    return cfg.SHAPE_WEIGHT * shape_variety(pts) + cfg.VARIETY_SCALE * corner_variety(pts)
+
+
 def min_radius(pts):
     return CURVATURE_SCALE / (float(curvature(pts).max()) + 1e-12)
 
@@ -91,7 +113,8 @@ def radius_factor(difficulty):
     return cfg.MIN_RADIUS_EASY + (cfg.MIN_RADIUS_HARD - cfg.MIN_RADIUS_EASY) * d
 
 
-def walls_are_sane(center, width, difficulty=cfg.DIFFICULTY):
+def walls_are_sane(center, width, difficulty=None):
+    difficulty = cfg.DIFFICULTY if difficulty is None else difficulty
     if min_radius(center) < width * radius_factor(difficulty):
         return False
     left, right = offset_walls(center, width * 0.5)
@@ -116,7 +139,7 @@ def track_fitness(center, width, difficulty):
     if any_self_intersection(left) or any_self_intersection(right):
         return FOLDED_SCORE
 
-    return VALID_BASE + float(k.std()) * cfg.VARIETY_SCALE * len_factor
+    return VALID_BASE + interest(center) * len_factor
 
 
 def circle_centerline(n_points=cfg.TRACK_POINTS):
@@ -137,7 +160,8 @@ class Track:
         self.cp_dir = tangents(center)[self.cp_idx]
         self.length = polyline_length(center)
         self.min_radius = min_radius(center)
-        self.variety = float(curvature(center).std()) * cfg.VARIETY_SCALE
+        self.variety = interest(center)
+        self.shape_variety = shape_variety(center)
         self.lo = center.min(axis=0) - self.half
         self.hi = center.max(axis=0) + self.half
 
@@ -155,7 +179,9 @@ class Track:
         return len(self.cp_mid)
 
 
-def evolve_track(rng, width=cfg.TRACK_WIDTH, difficulty=cfg.DIFFICULTY, attempts=3):
+def evolve_track(rng, width=None, difficulty=None, attempts=3):
+    width = cfg.TRACK_WIDTH if width is None else width
+    difficulty = cfg.DIFFICULTY if difficulty is None else difficulty
     for attempt in range(attempts):
         eased = max(0.0, difficulty - 0.25 * attempt)
         pop = np.stack([cppn.random_genome(cfg.TRACK_CPPN_LAYERS, rng)

@@ -7,7 +7,18 @@ def _gauss(x):
     return np.exp(-x * x)
 
 
-ACTS = (np.sin, _gauss, np.tanh, np.abs)
+def _wavelet(x):
+    return x * np.exp(-x * x)
+
+
+ACTS = (np.sin, _gauss, np.tanh, _wavelet)
+
+
+def angle_features(theta, n_inputs):
+    parts = []
+    for k in range(1, n_inputs // 2 + 1):
+        parts += [np.sin(k * theta), np.cos(k * theta)]
+    return np.stack(parts, axis=1)
 
 
 def genome_size(layers):
@@ -47,11 +58,11 @@ def forward(genome, layers, x):
 
 def ring_shape(genome, layers, n_points, r_min, r_max):
     theta = np.linspace(0.0, 2.0 * np.pi, n_points, endpoint=False)
-    x = np.stack([np.sin(theta), np.cos(theta)], axis=1)
-    r = forward(genome, layers, x)[:, 0]
+    r = forward(genome, layers, angle_features(theta, layers[0]))[:, 0]
     r = r_min + (r + 1.0) * 0.5 * (r_max - r_min)
     return np.stack([r * np.cos(theta), r * np.sin(theta)], axis=1)
 
 
-def random_genome(layers, rng, scale=cfg.CPPN_INIT_SCALE):
+def random_genome(layers, rng, scale=None):
+    scale = cfg.CPPN_INIT_SCALE if scale is None else scale
     return rng.normal(0.0, scale, genome_size(layers))
