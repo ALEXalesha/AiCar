@@ -56,11 +56,19 @@ def forward(genome, layers, x):
     return h
 
 
-def ring_shape(genome, layers, n_points, r_min, r_max):
+def ring_radii(genome, layers, n_points, r_min, r_max):
     theta = np.linspace(0.0, 2.0 * np.pi, n_points, endpoint=False)
-    r = forward(genome, layers, angle_features(theta, layers[0]))[:, 0]
-    r = r_min + (r + 1.0) * 0.5 * (r_max - r_min)
-    return np.stack([r * np.cos(theta), r * np.sin(theta)], axis=1)
+    out = forward(genome, layers, angle_features(theta, layers[0]))[:, 0]
+    return r_min + (out + 1.0) * 0.5 * (r_max - r_min)
+
+
+def radii_to_ring(radii):
+    theta = np.linspace(0.0, 2.0 * np.pi, len(radii), endpoint=False)
+    return np.stack([radii * np.cos(theta), radii * np.sin(theta)], axis=1)
+
+
+def ring_shape(genome, layers, n_points, r_min, r_max):
+    return radii_to_ring(ring_radii(genome, layers, n_points, r_min, r_max))
 
 
 def random_genome(layers, rng, scale=None):

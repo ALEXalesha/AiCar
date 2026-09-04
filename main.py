@@ -11,6 +11,7 @@ import render
 import sound
 import stats
 import track
+import trackgen
 import train
 import ui
 
@@ -21,9 +22,10 @@ DONE = "done"
 STATE_NAME = {TRAINING: "обучение", SHOWCASE: "показательный заезд", DONE: "заезд окончен"}
 SPEED_NAMES = ("x1", "x5", "x20", "без отрисовки")
 BRAIN_NAMES = ("с нуля", "продолжить")
+GEN_CPPN, GEN_MODEL = "CPPN + эволюция", "обученная модель"
 
 STATS_H = 176
-GRAPH_H = 96
+GRAPH_H = 76
 MESSAGE_FRAMES = 150
 
 
@@ -39,6 +41,7 @@ class Game:
         self.big = pygame.font.SysFont("consolas", 21, bold=True)
 
         self.rng = np.random.default_rng(seed)
+        self.generator = trackgen.Generator() if trackgen.available() else None
         self.build_panel()
         self.audio = sound.SoundBank(self.ui.value("volume"))
         self.totals = stats.load_totals()
@@ -55,7 +58,6 @@ class Game:
         p = ui.Panel(self.panel_rect, self.font)
         p.skip(STATS_H)
         p.graph("graph", GRAPH_H)
-        p.skip(6)
         p.slider("pop_size", "популяция", 10, 120, cfg.POP_SIZE, integer=True)
         p.slider("generations", "поколений", 5, 120, cfg.MAX_GENERATIONS, integer=True)
         p.slider("mut_sigma", "мутация", 0.01, 0.6, cfg.MUT_SIGMA)
@@ -63,10 +65,10 @@ class Game:
         p.slider("width", "ширина трассы", 25, 80, cfg.TRACK_WIDTH, integer=True)
         p.slider("difficulty", "сложность", 0.0, 1.0, cfg.DIFFICULTY)
         p.slider("volume", "громкость", 0.0, 1.0, cfg.VOLUME)
-        p.skip(4)
+        names = (GEN_CPPN, GEN_MODEL) if self.generator else (GEN_CPPN,)
+        p.toggle("generator", "генератор", names)
         p.toggle("speed", "скорость показа", SPEED_NAMES)
         p.toggle("brain", "мозг", BRAIN_NAMES)
-        p.skip(4)
         p.buttons([("round", "новый раунд"), ("track", "новая трасса")])
         p.buttons([("show", "заезд"), ("pause", "пауза")])
         p.buttons([("save", "сохранить"), ("load", "загрузить")])
@@ -86,9 +88,15 @@ class Game:
         self.screen.blit(label, label.get_rect(center=self.view.center))
         pygame.display.flip()
 
+    def make_track(self):
+        width, difficulty = self.ui.value("width"), self.ui.value("difficulty")
+        if self.generator is not None and self.ui.value("generator") == GEN_MODEL:
+            return self.generator.make_track(self.rng, width, difficulty)
+        return track.evolve_track(self.rng, width, difficulty)
+
     def new_round(self, new_car=True):
         self.splash("генерация трассы...")
-        self.track = track.evolve_track(self.rng, self.ui.value("width"), self.ui.value("difficulty"))
+        self.track = self.make_track()
         self.field = field.build_for_track(self.track)
         if new_car or not hasattr(self, "car"):
             self.car = car.random_car(self.rng)

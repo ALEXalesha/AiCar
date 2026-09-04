@@ -20,11 +20,18 @@ def smooth_closed(pts, w):
     return np.stack([x, y], axis=1)
 
 
-def centerline(genome, n_points=None, smooth_window=None):
-    n_points = cfg.TRACK_POINTS if n_points is None else n_points
+def centerline_from_radii(radii, smooth_window=None):
     smooth_window = cfg.SMOOTH_WINDOW if smooth_window is None else smooth_window
-    pts = cppn.ring_shape(genome, cfg.TRACK_CPPN_LAYERS, n_points, cfg.R_MIN, cfg.R_MAX)
-    return smooth_closed(pts, smooth_window)
+    return smooth_closed(cppn.radii_to_ring(np.asarray(radii, dtype=float)), smooth_window)
+
+
+def radii_from_genome(genome, n_points=None):
+    n_points = cfg.TRACK_POINTS if n_points is None else n_points
+    return cppn.ring_radii(genome, cfg.TRACK_CPPN_LAYERS, n_points, cfg.R_MIN, cfg.R_MAX)
+
+
+def centerline(genome, n_points=None, smooth_window=None):
+    return centerline_from_radii(radii_from_genome(genome, n_points), smooth_window)
 
 
 def tangents(pts):
@@ -142,8 +149,10 @@ def track_fitness(center, width, difficulty):
     return VALID_BASE + interest(center) * len_factor
 
 
-def circle_centerline(n_points=cfg.TRACK_POINTS):
-    r = 0.5 * (cfg.R_MIN + cfg.R_MAX)
+def circle_centerline(n_points=None):
+    n_points = cfg.TRACK_POINTS if n_points is None else n_points
+    wanted = 0.5 * (cfg.LEN_MIN + cfg.LEN_MAX) / (2.0 * np.pi)
+    r = float(np.clip(wanted, cfg.R_MIN, cfg.R_MAX))
     t = np.linspace(0.0, 2.0 * np.pi, n_points, endpoint=False)
     return np.stack([r * np.cos(t), r * np.sin(t)], axis=1)
 

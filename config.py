@@ -63,5 +63,7 @@ CAR_INIT_SCALE = 1.2
 SAVE_DIR = "saves"
 BRAIN_FILE = "saves/brains.npz"
 STATS_FILE = "saves/stats.json"
+MODEL_FILE = "models/track_vae.npz"
+DATASET_FILE = "saves/track_dataset.npz"
 
 SPEED_STEPS = (1, 5, 20, 0)
