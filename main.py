@@ -8,6 +8,7 @@ import evolution
 import field
 import race
 import render
+import sound
 import track
 import train
 import ui
@@ -37,6 +38,7 @@ class Game:
 
         self.rng = np.random.default_rng(seed)
         self.build_panel()
+        self.audio = sound.SoundBank(self.ui.value("volume"))
         self.paused = False
         self.best_brain = None
         self.rounds = 0
@@ -54,6 +56,7 @@ class Game:
         p.slider("elite_frac", "элита", 0.0, 0.4, cfg.ELITE_FRAC)
         p.slider("width", "ширина трассы", 25, 80, cfg.TRACK_WIDTH, integer=True)
         p.slider("difficulty", "сложность", 0.0, 1.0, cfg.DIFFICULTY)
+        p.slider("volume", "громкость", 0.0, 1.0, cfg.VOLUME)
         p.skip(4)
         p.toggle("speed", "скорость показа", SPEED_NAMES)
         p.toggle("brain", "мозг", BRAIN_NAMES)
@@ -119,13 +122,20 @@ class Game:
         self.state = SHOWCASE
         self.race = race.Race(self.track, self.field, self.car, self.best_brain[None, :])
 
+    def wrecks(self):
+        return int((~self.race.alive & (self.race.finish_step < 0)).sum())
+
     def advance(self):
         if self.paused or self.state == DONE:
+            self.audio.stop()
             return
+
+        wrecks_before, finished_before = self.wrecks(), self.race.n_finished
         for _ in range(self.speed or cfg.STEPS_PER_GEN):
             if self.race.done:
                 break
             self.race.step()
+        self.play_sounds(wrecks_before, finished_before)
 
         if not self.race.done:
             return
@@ -133,6 +143,18 @@ class Game:
             self.next_generation()
         else:
             self.state = DONE
+
+    def play_sounds(self, wrecks_before, finished_before):
+        self.audio.set_volume(self.ui.value("volume"))
+        if self.race.n_finished > finished_before:
+            self.audio.play_finish()
+        elif self.wrecks() > wrecks_before:
+            self.audio.play_crash()
+
+        if self.race.alive.any():
+            self.audio.update(float(self.race.speed[self.race.alive].max()), self.car.max_speed)
+        else:
+            self.audio.stop()
 
     def key(self, code):
         if code == pygame.K_ESCAPE:
@@ -226,6 +248,7 @@ class Game:
             self.draw_panel()
             pygame.display.flip()
             self.clock.tick(cfg.FPS)
+        self.audio.stop()
         pygame.quit()
 
 
