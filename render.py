@@ -76,16 +76,29 @@ def car_polygon(shape, pos, angle):
     return shape @ np.array([[c, s], [-s, c]]) + pos
 
 
+def nose_point(veh):
+    return veh.shape[int(np.argmax(veh.shape[:, 0]))]
+
+
+def _lighter(colour, k=0.55):
+    return tuple(int(c + (255 - c) * k) for c in colour)
+
+
 def draw_cars(surf, cam, r, veh, leader=None):
+    crashed = ~r.alive & (r.finish_step < 0)
     for i in range(r.n):
-        if r.alive[i]:
+        if not crashed[i]:
             continue
         pygame.draw.polygon(surf, DEAD_CAR, _poly(cam, car_polygon(veh.shape, r.pos[i], r.angle[i])))
 
+    nose = nose_point(veh)[None, :]
+    tip = _lighter(veh.color)
     for i in range(r.n):
-        if not r.alive[i]:
+        if crashed[i]:
             continue
         pygame.draw.polygon(surf, veh.color, _poly(cam, car_polygon(veh.shape, r.pos[i], r.angle[i])))
+        x, y = cam.to_screen(car_polygon(nose, r.pos[i], r.angle[i]))[0]
+        pygame.draw.circle(surf, tip, (int(x), int(y)), 2)
 
     if leader is not None:
         x, y = cam.to_screen(r.pos[leader])[0]
@@ -101,6 +114,6 @@ def draw_rays(surf, cam, pos, angle, rays):
         pygame.draw.line(surf, RAY_LINE, origin, tip, 1)
 
 
-def draw_car_badge(surf, cam, veh, at, scale):
+def draw_car_badge(surf, veh, at, scale):
     pts = veh.shape * scale + np.asarray(at, dtype=float)
     pygame.draw.polygon(surf, veh.color, [(int(x), int(y)) for x, y in pts])
