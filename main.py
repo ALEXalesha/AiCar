@@ -9,6 +9,7 @@ import field
 import race
 import render
 import sound
+import stats
 import track
 import train
 import ui
@@ -21,8 +22,9 @@ STATE_NAME = {TRAINING: "обучение", SHOWCASE: "показательны�
 SPEED_NAMES = ("x1", "x5", "x20", "без отрисовки")
 BRAIN_NAMES = ("с нуля", "продолжить")
 
-STATS_H = 216
+STATS_H = 176
 GRAPH_H = 96
+MESSAGE_FRAMES = 150
 
 
 class Game:
@@ -39,8 +41,12 @@ class Game:
         self.rng = np.random.default_rng(seed)
         self.build_panel()
         self.audio = sound.SoundBank(self.ui.value("volume"))
+        self.totals = stats.load_totals()
+        self.message = ""
+        self.message_left = 0
         self.paused = False
         self.best_brain = None
+        self.last_fitness = None
         self.rounds = 0
         self.running = True
         self.new_round(new_car=True)
@@ -63,6 +69,7 @@ class Game:
         p.skip(4)
         p.buttons([("round", "новый раунд"), ("track", "новая трасса")])
         p.buttons([("show", "заезд"), ("pause", "пауза")])
+        p.buttons([("save", "сохранить"), ("load", "загрузить")])
         self.ui = p
 
     @property
@@ -89,26 +96,36 @@ class Game:
 
         n = self.ui.value("pop_size")
         if self.keep_brain and self.best_brain is not None:
-            seeded = np.tile(self.best_brain, (n, 1))
-            self.brains = evolution.evolve(seeded, np.arange(n, dtype=float), self.rng,
-                                           elite_frac=1.0 / n,
-                                           mut_sigma=self.ui.value("mut_sigma"))
+            self.brains = self.seed_from(self.best_brain, n)
         else:
             self.brains = evolution.random_population(n, brain.genome_size(), self.rng)
 
         self.gen = 0
         self.history = []
+        self.last_fitness = None
         self.rounds += 1
         self.paused = False
         self.state = TRAINING
         self.race = race.Race(self.track, self.field, self.car, self.brains)
 
+    def say(self, text):
+        self.message = text
+        self.message_left = MESSAGE_FRAMES
+
+    def seed_from(self, genome, n):
+        seeded = np.tile(genome, (n, 1))
+        return evolution.evolve(seeded, np.arange(n, dtype=float), self.rng,
+                                elite_frac=1.0 / n, mut_sigma=self.ui.value("mut_sigma"))
+
     def next_generation(self):
         fit = self.race.fitness()
+        self.last_fitness = fit
         self.history.append(train.gen_stats(self.gen, self.race))
         self.best_brain = self.brains[int(np.argmax(fit))].copy()
 
         if self.race.n_finished or self.gen + 1 >= self.ui.value("generations"):
+            self.totals = stats.record_round(self.totals, self.history)
+            stats.save_totals(self.totals)
             self.start_showcase()
             return
 
@@ -179,6 +196,29 @@ class Game:
             self.start_showcase()
         if self.ui.clicked("pause"):
             self.paused = not self.paused
+        if self.ui.clicked("save"):
+            self.save_brains()
+        if self.ui.clicked("load"):
+            self.load_brains()
+
+    def save_brains(self):
+        fitness = self.last_fitness
+        if fitness is None or len(fitness) != len(self.brains):
+            fitness = np.zeros(len(self.brains))
+        stats.save_brains(self.brains, fitness)
+        self.say(f"мозги сохранены: {len(self.brains)} шт")
+
+    def load_brains(self):
+        genome = stats.best_brain()
+        if genome is None:
+            self.say("сохранения нет или оно не подходит")
+            return
+        self.best_brain = genome
+        self.brains = self.seed_from(genome, self.ui.value("pop_size"))
+        self.ui.widgets["brain"].index = 1
+        self.state = TRAINING
+        self.race = race.Race(self.track, self.field, self.car, self.brains)
+        self.say("мозг загружен, поколение перезапущено")
 
     def draw_field(self):
         if self.state in (SHOWCASE, DONE):
@@ -200,7 +240,7 @@ class Game:
         x = self.panel_rect.left + self.ui.pad
         y = self.panel_rect.top + self.ui.pad
 
-        def line(text, colour=render.TEXT, step=19):
+        def line(text, colour=render.TEXT, step=18):
             nonlocal y
             self.screen.blit(self.font.render(text, True, colour), (x, y))
             y += step
@@ -212,17 +252,27 @@ class Game:
 
         last = self.history[-1] if self.history else None
         line(f"раунд {self.rounds}   поколение {self.gen}", render.TEXT_DIM)
-        line(f"живых    {self.race.n_alive} / {self.race.n}")
-        line(f"чекпоинт {int(self.race.cp.max())} / {self.track.n_checkpoints - 1}")
-        line(f"лучший   {last.best:.0f}" if last else "лучший   -")
-        line(f"средний  {last.mean:.0f}" if last else "средний  -")
-        line(f"доехало  {last.finished}" if last else "доехало  -")
-        if last and last.best_time:
-            line(f"время    {last.best_time:.1f} с", render.LEADER_RING)
+        line(f"живых {self.race.n_alive}/{self.race.n}   чекпоинт "
+             f"{int(self.race.cp.max())}/{self.track.n_checkpoints - 1}")
+        if last:
+            line(f"лучший {last.best:.0f}   средний {last.mean:.0f}")
+            time = f"   время {last.best_time:.1f} с" if last.best_time else ""
+            line(f"доехало {last.finished}{time}",
+                 render.LEADER_RING if last.finished else render.TEXT)
+        else:
+            line("лучший -   средний -")
+            line("доехало -")
 
-        y = self.panel_rect.top + STATS_H - 38
-        line(f"трасса {self.track.length:.0f} px  поворот {self.track.min_radius:.0f}", render.TEXT_DIM, 17)
-        line(f"машина {self.car.max_speed:.0f} px/s руль {self.car.max_steer:.2f}", render.TEXT_DIM, 17)
+        if self.message_left > 0:
+            self.message_left -= 1
+            line(self.message, render.LEADER_RING)
+        else:
+            line(stats.summary(self.totals), render.TEXT_DIM)
+
+        line(f"трасса {self.track.length:.0f} px  поворот {self.track.min_radius:.0f}",
+             render.TEXT_DIM, 17)
+        line(f"машина {self.car.max_speed:.0f} px/s руль {self.car.max_steer:.2f}",
+             render.TEXT_DIM, 17)
         render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - 30, y - 16), 1.2)
 
     def draw_panel(self):
