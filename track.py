@@ -132,7 +132,9 @@ class Track:
         self.half = width * 0.5
         self.left, self.right = offset_walls(center, self.half)
         self.checkpoints = build_checkpoints(self.left, self.right, cfg.CHECKPOINT_STEP)
-        self.cp_mid = self.checkpoints.mean(axis=1)
+        self.cp_idx = np.arange(0, len(center), cfg.CHECKPOINT_STEP)
+        self.cp_mid = center[self.cp_idx]
+        self.cp_dir = tangents(center)[self.cp_idx]
         self.length = polyline_length(center)
         self.min_radius = min_radius(center)
         self.variety = float(curvature(center).std()) * cfg.VARIETY_SCALE
