@@ -145,11 +145,11 @@ def test_summary_is_trimmed_to_the_panel_width():
     import pygame
 
     import config as cfg
-    import ui
+    import render
 
     pygame.init()
     font = pygame.font.SysFont("consolas", 15)
     width = cfg.PANEL_W - 28
     for rounds in (1, 999, 123456):
         totals = dict(stats.EMPTY, rounds=rounds, finished=rounds, best_time=98765.4)
-        assert font.size(ui.fit_text(font, stats.summary(totals), width))[0] <= width
+        assert font.size(render.fit_text(font, stats.summary(totals), width))[0] <= width

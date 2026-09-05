@@ -341,7 +341,7 @@ class Game:
 
         def line(text, colour=render.TEXT, step=18):
             nonlocal y
-            shown = ui.fit_text(self.font, text, width)
+            shown = render.fit_text(self.font, text, width)
             self.screen.blit(self.font.render(shown, True, colour), (x, y))
             y += step
 
