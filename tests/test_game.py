@@ -1,0 +1,151 @@
+import functools
+import os
+
+import numpy as np
+import pygame
+
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
+import main
+
+
+@functools.lru_cache(maxsize=1)
+def game():
+    return main.Game(seed=0)
+
+
+def fresh():
+    g = game()
+    g.watched = main.WATCH_LEADER
+    g.hud = main.render.hud_rect(g.view)
+    g.hud_grab = None
+    return g
+
+
+def test_watching_nobody_hides_the_telemetry():
+    g = fresh()
+    g.watched = main.WATCH_NONE
+    assert g.telemetry() is None
+
+
+def test_watching_the_leader_picks_the_best_car():
+    g = fresh()
+    assert g.telemetry()["index"] == g.race.leader
+
+
+def test_watching_a_chosen_car_keeps_it():
+    g = fresh()
+    g.watched = 7
+    assert g.telemetry()["index"] == 7
+
+
+def test_telemetry_reports_what_the_network_sees():
+    g = fresh()
+    watch = g.telemetry()
+    assert len(watch["rays"]) == main.cfg.N_RAYS
+    assert np.all(watch["rays"] >= 0.0) and np.all(watch["rays"] <= 1.0)
+    assert -1.0 <= watch["steer"] <= 1.0
+    assert -1.0 <= watch["throttle"] <= 1.0
+
+
+def test_clicking_a_car_starts_watching_it():
+    g = fresh()
+    target = 11
+    point = g.camera.to_screen(g.race.pos[target])[0]
+    g.click_field((int(point[0]), int(point[1])))
+    assert g.race.watch(g.watched) in range(g.race.n)
+    assert g.watched != main.WATCH_NONE
+
+
+def test_clicking_empty_asphalt_stops_watching():
+    g = fresh()
+    far = g.camera.to_screen(g.track.center[len(g.track.center) // 2])[0]
+    g.click_field((int(far[0]), int(far[1])))
+    assert g.watched == main.WATCH_NONE
+
+
+def test_clicking_the_panel_changes_nothing():
+    g = fresh()
+    before = g.watched
+    g.click_field((g.panel_rect.centerx, g.panel_rect.centery))
+    assert g.watched == before
+
+
+def test_clicking_the_telemetry_grabs_it_instead_of_a_car():
+    g = fresh()
+    before = g.watched
+    g.click_field(g.hud.center)
+    assert g.hud_grab is not None
+    assert g.watched == before
+
+
+def test_dragging_moves_the_telemetry():
+    g = fresh()
+    g.click_field(g.hud.center)
+    g.drag_hud((500, 300))
+    assert g.hud.collidepoint(500, 300)
+
+
+def test_the_telemetry_cannot_leave_the_field():
+    g = fresh()
+    g.click_field(g.hud.center)
+    for target in ((-4000, -4000), (9000, 9000)):
+        g.drag_hud(target)
+        assert g.view.contains(g.hud)
+
+
+def test_dragging_without_a_grab_does_nothing():
+    g = fresh()
+    before = g.hud.topleft
+    g.drag_hud((500, 300))
+    assert g.hud.topleft == before
+
+
+def test_replay_toggle_has_three_modes():
+    assert game().ui.widgets["replay"].options == list(main.REPLAY_NAMES)
+
+
+def test_panel_widgets_fit_the_window():
+    g = game()
+    for widget in g.ui.widgets.values():
+        assert g.panel_rect.contains(widget.rect)
+
+
+def test_keys_switch_the_watch_mode():
+    g = fresh()
+    g.key(pygame.K_n)
+    assert g.watched == main.WATCH_NONE
+    g.key(pygame.K_l)
+    assert g.watched == main.WATCH_LEADER
+
+
+def test_levels_go_from_wide_to_narrow():
+    widths = [width for _, width, _ in main.LEVELS]
+    assert widths == sorted(widths, reverse=True)
+
+
+def test_switching_the_level_moves_the_sliders():
+    g = game()
+    for index, (name, width, difficulty) in enumerate(main.LEVELS):
+        g.ui.widgets["level"].index = index
+        g.apply_level()
+        assert g.ui.value("level") == name
+        assert g.ui.value("width") == width
+        assert abs(g.ui.value("difficulty") - difficulty) < 1e-9
+
+
+def test_the_level_is_applied_only_when_it_changes():
+    g = game()
+    g.ui.widgets["level"].index = 0
+    g.apply_level()
+    g.ui.widgets["width"].value = 71
+    g.apply_level()
+    assert g.ui.value("width") == 71
+
+
+def test_every_level_width_is_inside_the_slider_range():
+    g = game()
+    bar = g.ui.widgets["width"]
+    for _, width, _ in main.LEVELS:
+        assert bar.lo <= width <= bar.hi

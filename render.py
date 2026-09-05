@@ -172,14 +172,20 @@ def _bar(surf, rect, share, colour, centred=False):
                          border_radius=2)
 
 
-def draw_telemetry(surf, view, font, veh, watch):
-    box = pygame.Rect(view.left + HUD_PAD, view.bottom - HUD_H - HUD_PAD, HUD_W, HUD_H)
+def hud_rect(view):
+    return pygame.Rect(view.left + HUD_PAD, view.bottom - HUD_H - HUD_PAD, HUD_W, HUD_H)
+
+
+def draw_telemetry(surf, box, font, veh, watch):
     pygame.draw.rect(surf, HUD_BG, box, border_radius=6)
     pygame.draw.rect(surf, MIDLINE, box, 1, border_radius=6)
 
     x, y = box.left + 10, box.top + 8
     state = "едет" if watch["alive"] else ("финиш" if watch["finished"] else "разбилась")
     surf.blit(font.render(f"машинка #{watch['index']}  {state}", True, veh.color), (x, y))
+    grip = pygame.Rect(box.right - 26, box.top + 8, 16, 3)
+    for row in range(3):
+        pygame.draw.rect(surf, BAR_BG, grip.move(0, row * 5))
     y += 20
 
     surf.blit(font.render("датчики", True, TEXT_DIM), (x, y))
