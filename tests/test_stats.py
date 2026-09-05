@@ -139,14 +139,17 @@ def test_summary_reports_the_record():
     assert "всего 1" in text and "11.2" in text
 
 
-def test_summary_fits_the_panel():
+def test_summary_is_trimmed_to_the_panel_width():
     import os
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     import pygame
 
     import config as cfg
+    import ui
 
     pygame.init()
     font = pygame.font.SysFont("consolas", 15)
-    totals = dict(stats.EMPTY, rounds=999, finished=999, best_time=123.45)
-    assert font.size(stats.summary(totals))[0] <= cfg.PANEL_W - 28
+    width = cfg.PANEL_W - 28
+    for rounds in (1, 999, 123456):
+        totals = dict(stats.EMPTY, rounds=rounds, finished=rounds, best_time=98765.4)
+        assert font.size(ui.fit_text(font, stats.summary(totals), width))[0] <= width

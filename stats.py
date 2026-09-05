@@ -91,5 +91,5 @@ def summary(totals):
         return "всего: раундов нет"
     line = f"всего {totals['rounds']}  доехало {totals['finished']}"
     if totals["best_time"] is not None:
-        line += f"  рек {totals['best_time']:.1f}с"
+        line += f"  рекорд {totals['best_time']:.1f}с"
     return line
