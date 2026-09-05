@@ -428,6 +428,8 @@ def selftest(report_path, frames=400):
         f"папка данных:     {paths.data_dir()}",
         f"модель трасс:     {'есть' if game.generator else 'нет'} ({cfg.MODEL_FILE})",
         f"звук:             {'есть' if game.audio.enabled else 'нет, ' + (game.audio.reason or 'нет устройства')}",
+        f"формат звука:     {game.audio.rate} Гц, каналов {game.audio.channels}"
+        f" (драйвер {os.environ.get('SDL_AUDIODRIVER', '-')})",
         f"трасса:           длина {game.track.length:.0f}, чекпоинтов {game.track.n_checkpoints}",
         f"обучение:         поколений {len(game.history)}, состояние {game.state}",
         f"лучший результат: {game.history[-1].best:.0f}" if game.history else "лучший результат: -",

@@ -89,6 +89,7 @@ class SoundBank:
         self.level = -1
         self.enabled = False
         self.reason = ""
+        self.rate, self.channels = 0, 0
         try:
             rate, channels = mixer_format()
             self.rate, self.channels = rate, channels
