@@ -68,13 +68,46 @@ def test_all_samples_stay_inside_int16():
         assert np.abs(s).max() <= 32767
 
 
+def test_fit_channels_keeps_mono_as_is():
+    mono = np.arange(10, dtype=np.int16)
+    assert sound.fit_channels(mono, 1) is mono
+
+
+def test_fit_channels_doubles_a_mono_sample_for_stereo():
+    mono = np.arange(10, dtype=np.int16)
+    stereo = sound.fit_channels(mono, 2)
+    assert stereo.shape == (10, 2)
+    assert np.array_equal(stereo[:, 0], mono) and np.array_equal(stereo[:, 1], mono)
+
+
+def test_soundbank_works_on_a_stereo_mixer():
+    pygame.mixer.quit()
+    pygame.mixer.init(frequency=44100, size=-16, channels=2)
+    bank = sound.SoundBank(0.4)
+    assert bank.enabled, bank.reason
+    assert bank.channels == 2 and bank.rate == 44100
+    assert len(bank.engine) == cfg.ENGINE_LEVELS
+
+
+def test_soundbank_always_matches_the_real_mixer_format():
+    for rate, asked in ((22050, 1), (44100, 2), (48000, 2)):
+        pygame.mixer.quit()
+        pygame.mixer.init(frequency=rate, size=-16, channels=asked)
+        real_rate, _, real_channels = pygame.mixer.get_init()
+        bank = sound.SoundBank(0.4)
+        assert bank.enabled, bank.reason
+        assert (bank.rate, bank.channels) == (real_rate, abs(real_channels))
+
+
 def test_soundbank_survives_a_missing_audio_device(monkeypatch):
     def refuse(*args, **kwargs):
         raise pygame.error("нет аудиоустройства")
 
     monkeypatch.setattr(pygame.mixer, "init", refuse)
+    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
     bank = sound.SoundBank()
     assert not bank.enabled
+    assert bank.reason
     bank.update(100.0, 200.0)
     bank.play_crash()
     bank.play_finish()
@@ -83,6 +116,7 @@ def test_soundbank_survives_a_missing_audio_device(monkeypatch):
 
 
 def test_volume_is_clamped(monkeypatch):
+    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
     monkeypatch.setattr(pygame.mixer, "init", lambda *a, **k: (_ for _ in ()).throw(pygame.error("нет")))
     bank = sound.SoundBank()
     bank.set_volume(5.0)

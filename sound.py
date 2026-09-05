@@ -26,6 +26,21 @@ def _smooth(wave, w):
     return np.convolve(ext, np.ones(w) / w, mode="same")[w:-w]
 
 
+def fit_channels(sample, channels):
+    if channels <= 1:
+        return sample
+    return np.repeat(sample[:, None], channels, axis=1)
+
+
+def mixer_format():
+    ready = pygame.mixer.get_init()
+    if ready is None:
+        pygame.mixer.init()
+        ready = pygame.mixer.get_init()
+    rate, _, channels = ready
+    return int(rate), int(abs(channels))
+
+
 def engine_sample(freq, rate=None, rng=None):
     rate = cfg.SAMPLE_RATE if rate is None else rate
     rng = np.random.default_rng(0) if rng is None else rng
@@ -73,15 +88,18 @@ class SoundBank:
         self.volume = cfg.VOLUME if volume is None else volume
         self.level = -1
         self.enabled = False
+        self.reason = ""
         try:
-            pygame.mixer.quit()
-            pygame.mixer.init(frequency=cfg.SAMPLE_RATE, size=-16, channels=1, buffer=512)
-            self.engine = [pygame.sndarray.make_sound(s) for s in engine_bank()]
-            self.crash = pygame.sndarray.make_sound(crash_sample())
-            self.finish = pygame.sndarray.make_sound(finish_sample())
+            rate, channels = mixer_format()
+            self.rate, self.channels = rate, channels
+            make = pygame.sndarray.make_sound
+            self.engine = [make(fit_channels(s, channels)) for s in engine_bank(rate=rate)]
+            self.crash = make(fit_channels(crash_sample(rate), channels))
+            self.finish = make(fit_channels(finish_sample(rate), channels))
             self.motor = pygame.mixer.Channel(0)
             self.effects = pygame.mixer.Channel(1)
-        except (pygame.error, AttributeError, ValueError):
+        except (pygame.error, AttributeError, ValueError) as problem:
+            self.reason = str(problem) or type(problem).__name__
             return
         self.enabled = True
         self.set_volume(self.volume)
