@@ -1,5 +1,6 @@
 import functools
 import os
+import tempfile
 
 import numpy as np
 import pygame
@@ -176,3 +177,35 @@ def test_without_the_clip_the_field_would_reach_the_panel():
     surface = pygame.surfarray.array3d(g.screen)
     spill = np.any(surface != np.array(main.render.BG), axis=2)[g.panel_rect.left:, :]
     assert spill.any()
+
+
+def test_the_race_always_drives_the_current_brains():
+    g = fresh()
+    assert g.race.brains is g.brains
+
+
+def test_the_trace_is_reset_for_every_showcase():
+    g = fresh()
+    g.best_brain = g.brains[0].copy()
+    g.start_showcase()
+    first = len(g.path)
+    for _ in range(20):
+        g.advance()
+    grown = len(g.path)
+    g.start_showcase()
+    assert first == 1 and grown > first and len(g.path) == 1
+
+
+def test_saving_writes_the_fitness_of_the_trained_generation():
+    import stats
+
+    g = fresh()
+    g.last_fitness = np.arange(len(g.brains), dtype=float)
+    g.start_showcase()
+    assert g.race.n == 1 and len(g.brains) > 1
+
+    path = os.path.join(tempfile.mkdtemp(prefix="aicar-test-"), "brains.npz")
+    stats.save_brains(g.brains, g.last_fitness, path)
+    genomes, fitness = stats.load_brains(path)
+    assert np.allclose(genomes, g.brains)
+    assert np.allclose(fitness, g.last_fitness)
