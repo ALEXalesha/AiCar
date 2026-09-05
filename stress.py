@@ -1,5 +1,6 @@
 import argparse
 import os
+import tempfile
 import time
 import traceback
 
@@ -21,7 +22,15 @@ import stats
 import track
 import trackgen
 
-FAST, SLOW = "fast", "slow"
+# Проверка гоняет настоящую игру, а та пишет мозги и статистику. Уводим запись
+# во временную папку: испортить сохранения игрока прогоном проверки недопустимо.
+SANDBOX = os.path.join(tempfile.mkdtemp(prefix="aicar-stress-"), "saves")
+os.makedirs(SANDBOX, exist_ok=True)
+cfg.SAVE_DIR = SANDBOX
+cfg.BRAIN_FILE = os.path.join(SANDBOX, "brains.npz")
+cfg.STATS_FILE = os.path.join(SANDBOX, "stats.json")
+
+FAST, SLOW, HEAVY = "fast", "slow", "heavy"
 CHECKS = []
 
 
@@ -992,6 +1001,192 @@ def _(rng):
     assert panel.top <= ys.min() and ys.max() < panel.bottom
 
 
+# ---------------------------------------------------------------- долгий прогон
+
+def click(game, key):
+    """Настоящий клик по кнопке панели: нажатие и отпускание внутри неё."""
+    import pygame
+    at = game.ui.widgets[key].rect.center
+    for kind in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+        game.ui.handle(pygame.event.Event(kind, button=1, pos=at))
+
+
+def poke(game, rng):
+    """Случайное вмешательство игрока между кадрами."""
+    import pygame
+
+    roll = int(rng.integers(0, 14))
+    if roll == 0:
+        game.key(int(rng.choice([pygame.K_SPACE, pygame.K_l, pygame.K_n, pygame.K_s,
+                                 pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4])))
+    elif roll == 1:
+        # "новая трасса" и "новый раунд" не трогаем: каждая пересобирает мир и
+        # стоит секунды. Их путь всё равно проходится при сборке игры.
+        click(game, str(rng.choice(["show", "pause", "save", "load"])))
+    elif roll == 2:
+        name = str(rng.choice(["mut_sigma", "elite_frac", "pop_size", "generations", "volume"]))
+        bar = game.ui.widgets[name]
+        bar.value = float(rng.uniform(bar.lo, bar.hi))
+    elif roll == 3:
+        name = str(rng.choice(["speed", "replay", "brain", "generator", "level"]))
+        widget = game.ui.widgets[name]
+        widget.index = int(rng.integers(0, len(widget.options)))
+    elif roll == 4:
+        game.click_field((int(rng.integers(0, cfg.WINDOW_W)), int(rng.integers(0, cfg.WINDOW_H))))
+    elif roll == 5 and game.hud_grab is not None:
+        game.drag_hud((int(rng.integers(-500, 2000)), int(rng.integers(-500, 2000))))
+
+
+def hold(game):
+    """То, что обязано быть верно после любого кадра."""
+    import main
+
+    assert game.state in (main.TRAINING, main.SHOWCASE, main.DONE), game.state
+    assert game.rounds >= 1
+    assert game.gen >= 0
+
+    # В обучении едет вся популяция, в показательном заезде - один победитель.
+    # DONE достижимо двумя путями: после показательного заезда (машинка одна) и
+    # напрямую из next_generation при выключенном повторе (машинок вся пачка).
+    if game.state == main.TRAINING:
+        assert game.race.n == len(game.brains), f"{game.race.n} против {len(game.brains)}"
+        # Сверять только длину мало: после отбора популяция та же по размеру, но
+        # уже другая. Заезд обязан ехать именно на текущих мозгах, а не на копии
+        # прошлого поколения, поэтому сверяем тождество массива.
+        assert game.race.brains is game.brains, "заезд едет на прошлом поколении"
+    elif game.state == main.SHOWCASE:
+        assert game.race.n == 1, f"в показательном заезде {game.race.n} машинок"
+    else:
+        assert game.race.n in (1, len(game.brains)), game.race.n
+
+    finite(game.race.pos, game.race.angle, game.race.speed)
+    assert np.all(game.race.speed >= 0.0)
+    assert np.all(game.race.speed <= game.car.max_speed + 1e-6)
+    assert np.all(game.race.cp >= 0) and np.all(game.race.cp <= game.race.last_cp)
+
+    # Путь копится по точке за шаг и сбрасывается на каждом показательном заезде.
+    # Если сброс когда-нибудь потеряется, список будет расти весь прогон.
+    assert len(game.path) <= cfg.STEPS_PER_GEN + 1, f"путь разросся до {len(game.path)}"
+
+    # То же про историю поколений: она обнуляется в new_round.
+    assert len(game.history) <= game.ui.widgets["generations"].hi + 1
+
+    if game.best_brain is not None:
+        assert game.best_brain.shape == (brain.genome_size(),)
+
+    assert game.watched in (main.WATCH_LEADER, main.WATCH_NONE) or         0 <= game.watched < game.race.n
+    assert game.view.contains(game.hud)
+
+    for key in ("rounds", "finished"):
+        assert game.totals[key] >= 0
+    if game.totals["best_time"] is not None:
+        assert game.totals["best_time"] > 0.0
+
+
+@check("долгий прогон: игра держит инварианты под случайными нажатиями", HEAVY)
+def _(rng):
+    game = the_game()
+    game.new_round(new_car=bool(rng.integers(0, 2)))
+    hold(game)
+
+    import render
+    for frame in range(int(rng.integers(200, 900))):
+        poke(game, rng)
+        game.apply_buttons()
+        game.advance()
+        hold(game)
+        # Изредка рисуем полный кадр: раскладка обязана переживать любое
+        # состояние, включая пустую историю, паузу и слежение ни за кем.
+        if frame % 25 == 0:
+            game.screen.fill(render.BG)
+            game.draw_field()
+            game.draw_panel()
+
+
+@check("долгий прогон: счётчики только растут через несколько раундов", HEAVY)
+def _(rng):
+    import main
+    game = the_game()
+    game.ui.widgets["speed"].index = 3        # поколение за кадр
+    game.ui.widgets["generations"].value = 3
+    game.ui.widgets["pop_size"].value = 12
+
+    # Одного раунда мало: первый заполняет пустые счётчики, и порча значения
+    # прошлого раунда на нём не видна. Нужно как минимум два подряд.
+    seen = (game.totals["rounds"], game.totals["finished"])
+    for _ in range(3):
+        game.new_round()
+        for _ in range(40):
+            game.apply_buttons()
+            game.advance()
+            now = (game.totals["rounds"], game.totals["finished"])
+            assert now[0] >= seen[0], f"раунды: {now[0]} после {seen[0]}"
+            assert now[1] >= seen[1], f"доехавшие: {now[1]} после {seen[1]}"
+            seen = now
+            if game.state != main.TRAINING:
+                break
+        assert game.state != main.TRAINING, "раунд не кончился за 40 кадров"
+        assert len(game.history) >= 1
+    assert game.totals["rounds"] >= 3, f"засчитано раундов: {game.totals['rounds']}"
+
+
+@check("сохранения: мозг настоящего раунда переживает запись и чтение", HEAVY)
+def _(rng):
+    import main
+    game = the_game()
+    game.ui.widgets["speed"].index = 3
+    game.ui.widgets["generations"].value = 2
+    game.ui.widgets["pop_size"].value = 10
+    game.ui.widgets["replay"].index = int(rng.integers(0, 3))
+    game.new_round()
+
+    # Никаких подставленных вручную мозгов: раунд отрабатывает по-настоящему,
+    # в том числе показательный заезд. Именно на нём сохранение однажды и
+    # ломалось - приспособленность бралась у заезда с одной машинкой.
+    for _ in range(40):
+        game.apply_buttons()
+        game.advance()
+        if game.state != main.TRAINING:
+            break
+    assert game.state != main.TRAINING
+
+    # Ждём не "какой-нибудь из сохранённых", а именно лучший мозг последнего
+    # обученного поколения. Слабая проверка проходит и тогда, когда сохранение
+    # свалилось на нулевые оценки и записало первый попавшийся геном.
+    # Гарантированно уводим игру в показательный заезд: там едет одна машинка,
+    # а популяция остаётся полной. Именно это расхождение и ломало сохранение.
+    click(game, "show")
+    game.apply_buttons()
+    assert game.race.n == 1 and len(game.brains) > 1
+
+    assert game.last_fitness is not None and len(game.last_fitness) == len(game.brains)
+    # Снимок до нажатий: загрузка заменяет и популяцию, и оценки, поэтому
+    # сверять файл с тем, что осталось в игре после неё, бессмысленно.
+    kept_pop = game.brains.copy()
+    kept_fit = np.asarray(game.last_fitness, dtype=float).copy()
+    want = kept_pop[int(np.argmax(kept_fit))].copy()
+
+    click(game, "save")
+    game.apply_buttons()
+    game.best_brain = None
+    click(game, "load")
+    game.apply_buttons()
+
+    assert game.best_brain is not None, "загрузка не нашла только что сохранённое"
+    assert np.allclose(game.best_brain, want), "загрузился не лучший мозг поколения"
+
+    # Прямая сверка с файлом. Без неё поломка видна только когда лучший мозг
+    # оказался не первым, а при элитизме он как раз часто первый: победитель
+    # переносится в новое поколение без изменений и садится в начало массива.
+    saved = stats.load_brains()
+    assert saved is not None, "файл сохранения не читается"
+    genomes, fitness = saved
+    assert np.allclose(genomes, kept_pop), "записана не та популяция"
+    assert np.allclose(fitness, kept_fit), "записаны не те оценки"
+
+    hold(game)
+
+
 # ---------------------------------------------------------------- прочее
 
 @check("трасса: сложность монотонно ослабляет требование к радиусу")
@@ -1154,12 +1349,12 @@ def _(rng):
 
 # ---------------------------------------------------------------- прогон
 
-def run_round(seed, fast_cases, slow_cases, verbose=False):
+def run_round(seed, counts, verbose=False):
     rng = np.random.default_rng(seed)
     failures = []
     done = 0
     for name, fn, cost in CHECKS:
-        cases = fast_cases if cost == FAST else slow_cases
+        cases = counts[cost]
         for case in range(cases):
             try:
                 fn(rng)
@@ -1176,13 +1371,15 @@ def main():
     ap.add_argument("--rounds", type=int, default=10)
     ap.add_argument("--fast", type=int, default=120)
     ap.add_argument("--slow", type=int, default=4)
+    ap.add_argument("--heavy", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    fast = sum(1 for _, _, cost in CHECKS if cost == FAST)
-    slow = len(CHECKS) - fast
-    per_round = fast * args.fast + slow * args.slow
-    print(f"свойств {len(CHECKS)} ({fast} быстрых, {slow} тяжёлых)")
+    counts = {FAST: args.fast, SLOW: args.slow, HEAVY: args.heavy}
+    tally = {tier: sum(1 for _, _, cost in CHECKS if cost == tier) for tier in counts}
+    per_round = sum(tally[tier] * counts[tier] for tier in counts)
+    print(f"свойств {len(CHECKS)} ({tally[FAST]} быстрых, {tally[SLOW]} тяжёлых, "
+          f"{tally[HEAVY]} очень тяжёлых)")
     print(f"на круг {per_round} проверок, кругов {args.rounds}, всего {per_round * args.rounds}")
     print()
 
@@ -1190,7 +1387,7 @@ def main():
     total, broken = 0, []
     for r in range(args.rounds):
         t0 = time.perf_counter()
-        done, failures = run_round(args.seed + r * 1000, args.fast, args.slow)
+        done, failures = run_round(args.seed + r * 1000, counts)
         total += done
         broken += failures
         mark = "ОШИБКИ" if failures else "чисто"
