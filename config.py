@@ -1,4 +1,8 @@
+import os
+
 import numpy as np
+
+import paths
 
 WINDOW_W, WINDOW_H = 1280, 720
 PANEL_W = 300
@@ -60,10 +64,10 @@ CAR_CPPN_LAYERS = (4, 6, 6, 1)
 CPPN_INIT_SCALE = 0.5
 CAR_INIT_SCALE = 1.2
 
-SAVE_DIR = "saves"
-BRAIN_FILE = "saves/brains.npz"
-STATS_FILE = "saves/stats.json"
-MODEL_FILE = "models/track_vae.npz"
-DATASET_FILE = "saves/track_dataset.npz"
+SAVE_DIR = os.path.join(paths.data_dir(), "saves")
+BRAIN_FILE = os.path.join(SAVE_DIR, "brains.npz")
+STATS_FILE = os.path.join(SAVE_DIR, "stats.json")
+DATASET_FILE = os.path.join(SAVE_DIR, "track_dataset.npz")
+MODEL_FILE = paths.resource("models", "track_vae.npz")
 
 SPEED_STEPS = (1, 5, 20, 0)

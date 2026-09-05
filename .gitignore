@@ -3,3 +3,8 @@ __pycache__/
 saves/
 .pytest_cache/
 .remember/
+build/
+dist/
+*.spec
+exe_report*.txt
+selftest*.txt

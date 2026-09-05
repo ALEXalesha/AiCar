@@ -10,7 +10,7 @@ import config as cfg
 import dataset
 import track
 
-MODEL_FILE = "models/track_vae.npz"
+MODEL_FILE = cfg.MODEL_FILE
 LATENT = 12
 HIDDEN = (256, 128)
 
