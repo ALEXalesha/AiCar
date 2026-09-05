@@ -43,6 +43,7 @@ PICK_RADIUS = 40.0
 GEN_CPPN, GEN_MODEL = "CPPN + эволюция", "обученная модель"
 
 STATS_H = 172
+BADGE_INSET, BADGE_SCALE = 52, 2.4
 GRAPH_H = 54
 MESSAGE_FRAMES = 150
 
@@ -319,6 +320,7 @@ class Game:
 
     def draw_field(self):
         self.camera.fit(self.track.lo, self.track.hi)
+        self.screen.set_clip(self.view)
 
         render.draw_track(self.screen, self.camera, self.track)
         render.draw_checkpoints(self.screen, self.camera, self.track, int(self.race.cp.max()))
@@ -332,6 +334,7 @@ class Game:
             render.draw_rays(self.screen, self.camera, self.race.pos[watch["index"]],
                              self.race.angle[watch["index"]], watch["rays"] * cfg.RAY_MAX)
             render.draw_telemetry(self.screen, self.hud, self.font, self.car, watch)
+        self.screen.set_clip(None)
 
     def draw_stats(self):
         x = self.panel_rect.left + self.ui.pad
@@ -373,7 +376,8 @@ class Game:
              render.TEXT_DIM, 17)
         line(f"машина {self.car.max_speed:.0f} px/s руль {self.car.max_steer:.2f}",
              render.TEXT_DIM, 17)
-        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - 44, y - 14), 2.4)
+        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - BADGE_INSET, y - 14),
+                              BADGE_SCALE)
 
     def draw_panel(self):
         pygame.draw.rect(self.screen, render.PANEL_BG, self.panel_rect)

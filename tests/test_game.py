@@ -149,3 +149,30 @@ def test_every_level_width_is_inside_the_slider_range():
     bar = g.ui.widgets["width"]
     for _, width, _ in main.LEVELS:
         assert bar.lo <= width <= bar.hi
+
+
+def field_ink_on_the_panel(g):
+    g.camera.fit(g.track.lo, g.track.hi)
+    edge = [g.camera.to_world((g.view.right - k, y)) for k in (2, 12) for y in (120, 600)]
+    g.race.pos[:len(edge)] = np.array(edge)
+    g.screen.fill(main.render.BG)
+    g.draw_field()
+    surface = pygame.surfarray.array3d(g.screen)
+    return np.any(surface != np.array(main.render.BG), axis=2)[g.panel_rect.left:, :]
+
+
+def test_the_field_never_paints_on_the_side_panel():
+    assert not field_ink_on_the_panel(fresh()).any()
+
+
+def test_without_the_clip_the_field_would_reach_the_panel():
+    """Показывает, что предыдущий тест не проходит сам собой."""
+    g = fresh()
+    g.camera.fit(g.track.lo, g.track.hi)
+    edge = [g.camera.to_world((g.view.right - k, y)) for k in (2, 12) for y in (120, 600)]
+    g.race.pos[:len(edge)] = np.array(edge)
+    g.screen.fill(main.render.BG)
+    main.render.draw_cars(g.screen, g.camera, g.race, g.car, None)
+    surface = pygame.surfarray.array3d(g.screen)
+    spill = np.any(surface != np.array(main.render.BG), axis=2)[g.panel_rect.left:, :]
+    assert spill.any()

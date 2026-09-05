@@ -150,3 +150,13 @@ def bottom_line_right_edge(speed):
 def test_the_checkpoint_does_not_move_when_the_speed_changes():
     edges = {bottom_line_right_edge(speed) for speed in (0.0, 208.0, 99999.0)}
     assert len(edges) == 1
+
+
+def test_the_car_badge_fits_beside_the_panel_text():
+    import car
+    import config as cfg
+    import main
+
+    longest = car.HALF_SIZE_MAX * np.sqrt(car.ASPECT_MAX)
+    right = cfg.WINDOW_W - main.BADGE_INSET + longest * main.BADGE_SCALE
+    assert right < cfg.WINDOW_W
