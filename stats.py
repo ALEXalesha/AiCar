@@ -89,10 +89,7 @@ def average_gens_to_finish(totals):
 def summary(totals):
     if not totals["rounds"]:
         return "всего: раундов нет"
-    average = average_gens_to_finish(totals)
-    parts = [f"раундов {totals['rounds']}", f"доехало {totals['finished']}"]
+    line = f"всего {totals['rounds']}  доехало {totals['finished']}"
     if totals["best_time"] is not None:
-        parts.append(f"рекорд {totals['best_time']:.1f} с")
-    if average is not None:
-        parts.append(f"в среднем {average:.1f} пок")
-    return "всего: " + ", ".join(parts)
+        line += f"  рек {totals['best_time']:.1f}с"
+    return line

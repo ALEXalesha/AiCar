@@ -136,4 +136,17 @@ def test_summary_of_an_empty_history():
 def test_summary_reports_the_record():
     totals = stats.record_round(dict(stats.EMPTY), [Gen(1, 11.25)])
     text = stats.summary(totals)
-    assert "раундов 1" in text and "11.2" in text
+    assert "всего 1" in text and "11.2" in text
+
+
+def test_summary_fits_the_panel():
+    import os
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    import pygame
+
+    import config as cfg
+
+    pygame.init()
+    font = pygame.font.SysFont("consolas", 15)
+    totals = dict(stats.EMPTY, rounds=999, finished=999, best_time=123.45)
+    assert font.size(stats.summary(totals))[0] <= cfg.PANEL_W - 28

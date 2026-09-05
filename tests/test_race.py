@@ -192,3 +192,53 @@ def test_random_brains_actually_drive_somewhere():
     r = race.run(trk, fld, veh, brains)
     assert r.fitness().max() > 0.0
     assert r.cp.max() >= 1
+
+
+def watchable(n=6):
+    trk, fld, veh, _ = setup(n=n)
+    r = race.Race(trk, fld, veh, np.zeros((n, brain.genome_size())))
+    r.pos[:] = np.stack([np.arange(n) * 50.0, np.zeros(n)], axis=1)
+    return r
+
+
+def test_nearest_alive_picks_the_closest_living_car():
+    r = watchable()
+    r.alive[:] = [False, False, True, False, True, True]
+    assert r.nearest_alive(0) == 2
+    assert r.nearest_alive(3) == 2
+
+
+def test_nearest_alive_keeps_the_index_when_nobody_is_left():
+    r = watchable()
+    r.alive[:] = False
+    assert r.nearest_alive(4) == 4
+
+
+def test_nearest_to_finds_the_car_by_position():
+    r = watchable()
+    assert r.nearest_to((199.0, 0.0)) == 4
+    assert r.nearest_to((-500.0, 0.0)) == 0
+
+
+def test_watch_keeps_a_living_car():
+    r = watchable()
+    assert r.watch(3) == 3
+
+
+def test_watch_switches_away_from_a_dead_car():
+    r = watchable()
+    r.alive[3] = False
+    assert r.watch(3) in (2, 4)
+
+
+def test_watch_without_a_choice_follows_the_leader():
+    r = watchable()
+    r.cp[:] = [0, 0, 0, 9, 0, 0]
+    assert r.watch(None) == 3
+
+
+def test_watch_ignores_an_index_out_of_range():
+    r = watchable()
+    r.cp[:] = [0, 0, 0, 0, 7, 0]
+    assert r.watch(99) == 4
+    assert r.watch(-1) == 4

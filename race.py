@@ -85,6 +85,21 @@ class Race:
     def leader(self):
         return int(np.argmax(self.fitness()))
 
+    def nearest_alive(self, index):
+        alive = np.flatnonzero(self.alive)
+        if not len(alive):
+            return index
+        gap = np.linalg.norm(self.pos[alive] - self.pos[index], axis=1)
+        return int(alive[int(np.argmin(gap))])
+
+    def nearest_to(self, point):
+        return int(np.argmin(np.linalg.norm(self.pos - np.asarray(point, dtype=float), axis=1)))
+
+    def watch(self, index):
+        if index is None or not 0 <= index < self.n:
+            return self.leader
+        return index if self.alive[index] else self.nearest_alive(index)
+
 
 def run(trk, fld, vehicle, brains):
     race = Race(trk, fld, vehicle, brains)

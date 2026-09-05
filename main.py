@@ -54,6 +54,7 @@ class Game:
         self.message_left = 0
         self.paused = False
         self.best_brain = None
+        self.watched = None
         self.last_fitness = None
         self.rounds = 0
         self.running = True
@@ -115,10 +116,12 @@ class Game:
 
         self.gen = 0
         self.history = []
+        self.path = []
         self.last_fitness = None
         self.rounds += 1
         self.paused = False
         self.state = TRAINING
+        self.watched = None
         self.race = race.Race(self.track, self.field, self.car, self.brains)
 
     def say(self, text):
@@ -151,6 +154,8 @@ class Game:
     def start_showcase(self):
         self.state = SHOWCASE
         self.race = race.Race(self.track, self.field, self.car, self.best_brain[None, :])
+        self.watched = 0
+        self.path = [self.race.pos[0].copy()]
 
     def wrecks(self):
         return int((~self.race.alive & (self.race.finish_step < 0)).sum())
@@ -161,10 +166,13 @@ class Game:
             return
 
         wrecks_before, finished_before = self.wrecks(), self.race.n_finished
+        tracing = self.state == SHOWCASE
         for _ in range(self.speed or cfg.STEPS_PER_GEN):
             if self.race.done:
                 break
             self.race.step()
+            if tracing:
+                self.path.append(self.race.pos[0].copy())
         self.play_sounds(wrecks_before, finished_before)
 
         if not self.race.done:
@@ -197,8 +205,14 @@ class Game:
             self.new_round(new_car=False)
         elif code == pygame.K_s and self.best_brain is not None:
             self.start_showcase()
+        elif code == pygame.K_l:
+            self.watched = None
         elif pygame.K_1 <= code <= pygame.K_4:
             self.ui.widgets["speed"].index = code - pygame.K_1
+
+    def click_field(self, pos):
+        if self.view.collidepoint(pos):
+            self.watched = self.race.nearest_to(self.camera.to_world(pos))
 
     def apply_buttons(self):
         if self.ui.clicked("round"):
@@ -233,21 +247,35 @@ class Game:
         self.race = race.Race(self.track, self.field, self.car, self.brains)
         self.say("мозг загружен, поколение перезапущено")
 
+    def telemetry(self):
+        index = self.race.watch(self.watched)
+        self.watched = index
+        obs = self.race.observe()
+        action = brain.forward(self.race.brains, obs)
+        return {
+            "index": index,
+            "alive": bool(self.race.alive[index]),
+            "finished": bool(self.race.finish_step[index] >= 0),
+            "rays": obs[index, :cfg.N_RAYS],
+            "speed": float(self.race.speed[index]),
+            "steer": float(action[index, 0]),
+            "throttle": float(action[index, 1]),
+            "cp": f"{int(self.race.cp[index])}/{self.track.n_checkpoints - 1}",
+        }
+
     def draw_field(self):
-        if self.state in (SHOWCASE, DONE):
-            self.camera.follow(self.race.pos[0], render.SHOWCASE_SCALE)
-        else:
-            self.camera.fit(self.track.lo, self.track.hi)
+        self.camera.fit(self.track.lo, self.track.hi)
 
         render.draw_track(self.screen, self.camera, self.track)
         render.draw_checkpoints(self.screen, self.camera, self.track, int(self.race.cp.max()))
+        if self.state in (SHOWCASE, DONE):
+            render.draw_path(self.screen, self.camera, self.path, render._lighter(self.car.color))
 
-        leader = self.race.leader
-        render.draw_cars(self.screen, self.camera, self.race, self.car, leader)
-        if self.race.alive[leader]:
-            rays = self.race.observe()[leader, :cfg.N_RAYS] * cfg.RAY_MAX
-            render.draw_rays(self.screen, self.camera, self.race.pos[leader],
-                             self.race.angle[leader], rays)
+        watch = self.telemetry()
+        render.draw_cars(self.screen, self.camera, self.race, self.car, watch["index"])
+        render.draw_rays(self.screen, self.camera, self.race.pos[watch["index"]],
+                         self.race.angle[watch["index"]], watch["rays"] * cfg.RAY_MAX)
+        render.draw_telemetry(self.screen, self.view, self.font, self.car, watch)
 
     def draw_stats(self):
         x = self.panel_rect.left + self.ui.pad
@@ -286,7 +314,7 @@ class Game:
              render.TEXT_DIM, 17)
         line(f"машина {self.car.max_speed:.0f} px/s руль {self.car.max_steer:.2f}",
              render.TEXT_DIM, 17)
-        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - 30, y - 16), 1.2)
+        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - 44, y - 14), 2.4)
 
     def draw_panel(self):
         pygame.draw.rect(self.screen, render.PANEL_BG, self.panel_rect)
@@ -301,6 +329,9 @@ class Game:
                     self.running = False
                 elif event.type == pygame.KEYDOWN:
                     self.key(event.key)
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    self.click_field(event.pos)
+                    self.ui.handle(event)
                 else:
                     self.ui.handle(event)
             self.apply_buttons()
