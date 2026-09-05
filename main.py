@@ -93,7 +93,7 @@ class Game:
         p.toggle("speed", "скорость показа", SPEED_NAMES)
         p.toggle("brain", "мозг", BRAIN_NAMES)
         p.toggle("replay", "повтор заезда", REPLAY_NAMES)
-        p.buttons([("round", "новый раунд"), ("track", "новая трасса")])
+        p.buttons([("round", "трасса и машина"), ("track", "только трасса")])
         p.buttons([("show", "заезд"), ("pause", "пауза")])
         p.buttons([("save", "сохранить"), ("load", "загрузить")])
         self.ui = p
@@ -424,7 +424,7 @@ def selftest(report_path, frames=400):
         f"запуск из архива: {paths.frozen()}",
         f"папка данных:     {paths.data_dir()}",
         f"модель трасс:     {'есть' if game.generator else 'нет'} ({cfg.MODEL_FILE})",
-        f"звук:             {'есть' if game.audio.enabled else 'нет'}",
+        f"звук:             {'есть' if game.audio.enabled else 'нет, ' + (game.audio.reason or 'нет устройства')}",
         f"трасса:           длина {game.track.length:.0f}, чекпоинтов {game.track.n_checkpoints}",
         f"обучение:         поколений {len(game.history)}, состояние {game.state}",
         f"лучший результат: {game.history[-1].best:.0f}" if game.history else "лучший результат: -",
