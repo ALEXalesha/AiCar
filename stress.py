@@ -763,6 +763,235 @@ def _(rng):
         assert np.array_equal(veh.stacked[start:end], poly)
 
 
+# ---------------------------------------------------------------- слой отрисовки
+
+def canvas(ground, w=cfg.WINDOW_W, h=cfg.WINDOW_H):
+    import pygame
+    pygame.init()
+    surf = pygame.Surface((w, h))
+    surf.fill(ground)
+    return surf
+
+
+def ink(surf, ground):
+    """Маска (ширина, высота): True там, где что-то нарисовали поверх фона."""
+    import pygame
+    return np.any(pygame.surfarray.array3d(surf) != np.array(ground), axis=2)
+
+
+def field_view():
+    import pygame
+    return pygame.Rect(0, 0, cfg.WINDOW_W - cfg.PANEL_W, cfg.WINDOW_H)
+
+
+def edge_positions(trk):
+    """Четыре точки на внешней стене, самые дальние по каждой оси."""
+    spots = []
+    for axis, sign in ((0, 1), (0, -1), (1, 1), (1, -1)):
+        k = int(np.argmax(sign * trk.center[:, axis]))
+        offset = np.zeros(2)
+        offset[axis] = sign * trk.half
+        spots.append(trk.center[k] + offset)
+    return np.array(spots)
+
+
+@check("отрисовка: поле не залезает на боковую панель", SLOW)
+def _(rng):
+    import render
+    # Через саму игру, а не через свою копию draw_field: проверять надо тот код,
+    # который выполняется, иначе пропадёт обрезка в main и никто не заметит.
+    game = the_game()
+    # Ставим машинки вплотную к правой границе поля. В настоящем заезде они туда
+    # не заедут, но проверяется не заезд, а сама защита: обрезка в draw_field.
+    # Без неё кузов пересекает границу и красит панель.
+    game.camera.fit(game.track.lo, game.track.hi)
+    edge = [game.camera.to_world((game.view.right - k, y))
+            for k in (2, 10, 20) for y in (100, game.view.centery, game.view.bottom - 100)]
+    game.race.pos[:len(edge)] = np.array(edge)
+    game.race.angle[:] = rng.uniform(-np.pi, np.pi, game.race.n)
+    game.race.alive[:] = rng.integers(0, 2, game.race.n).astype(bool)
+
+    game.screen.fill(render.BG)
+    game.draw_field()
+    assert not ink(game.screen, render.BG)[game.panel_rect.left:, :].any(), "краска на панели"
+
+
+@check("отрисовка: стены трассы помещаются в кадр", SLOW)
+def _(rng):
+    import render
+    trk, _ = small_world(rng)
+    view = field_view()
+    cam = render.Camera(view, trk.lo, trk.hi)
+    for wall in (trk.left, trk.right, trk.center):
+        pts = cam.to_screen(wall)
+        assert np.all(pts[:, 0] >= view.left) and np.all(pts[:, 0] <= view.right)
+        assert np.all(pts[:, 1] >= view.top) and np.all(pts[:, 1] <= view.bottom)
+
+
+@check("отрисовка: короткий путь не рисуется и не падает")
+def _(rng):
+    import render
+    view = field_view()
+    cam = render.Camera(view, np.array([-100.0, -100.0]), np.array([100.0, 100.0]))
+    surf = canvas(render.BG)
+    for points in ([], [[0.0, 0.0]], np.zeros((1, 2))):
+        render.draw_path(surf, cam, points, render.TEXT)
+    assert not ink(surf, render.BG).any(), "из одной точки нарисовалась линия"
+
+
+@check("отрисовка: путь из двух точек виден")
+def _(rng):
+    import render
+    view = field_view()
+    cam = render.Camera(view, np.array([-100.0, -100.0]), np.array([100.0, 100.0]))
+    surf = canvas(render.BG)
+    a, b = rng.uniform(-90.0, 90.0, (2, 2))
+    render.draw_path(surf, cam, np.stack([a, b]), render.TEXT)
+    if np.linalg.norm(a - b) * cam.scale >= 2.0:
+        assert ink(surf, render.BG).any(), "линия не нарисовалась"
+
+
+@check("палитра: цвета корректны, разбитая отличается от целой")
+def _(rng):
+    import render
+    veh = car.random_car(rng)
+    live, dead = render.palette(veh, False), render.palette(veh, True)
+    assert set(live) == set(dead) == set(veh.kinds) | set(live)
+    for colours in (live, dead):
+        for kind, colour in colours.items():
+            assert len(colour) == 3, kind
+            assert all(0 <= c <= 255 for c in colour), (kind, colour)
+    assert live != dead
+    assert live["body"] == tuple(veh.color) or list(live["body"]) == list(veh.color)
+
+
+@check("отрисовка: нос машинки впереди центра и внутри габарита")
+def _(rng):
+    import render
+    veh = car.random_car(rng)
+    nose = render.nose_point(veh)
+    finite(nose)
+    assert nose[0] > 0.0, "нос не впереди"
+    assert nose[0] <= veh.shape[:, 0].max() + 1e-9
+    assert abs(nose[1]) <= veh.width * 0.5 + 1e-9
+
+
+@check("отрисовка: значок машинки помещается в отведённое место")
+def _(rng):
+    import render
+    veh = car.random_car(rng)
+    scale = float(rng.uniform(1.5, 3.0))
+    at = (240, 120)
+    surf = canvas(render.PANEL_BG, 480, 240)
+    render.draw_car_badge(surf, veh, at, scale, float(rng.uniform(-np.pi, np.pi)))
+    mask = ink(surf, render.PANEL_BG)
+    assert mask.any(), "значок не нарисовался"
+    xs = np.argwhere(mask.any(axis=1)).ravel()
+    ys = np.argwhere(mask.any(axis=0)).ravel()
+    # Граница - наибольший радиус точки контура, а не наибольшая координата:
+    # поворот сохраняет радиус, поэтому угловая точка (9.2, 5.0) может уехать
+    # по одной оси на 10.5. И не veh.width - колёса выступают за него на десятую.
+    reach = float(np.linalg.norm(veh.stacked, axis=1).max()) * scale + 2.0
+    assert at[0] - reach <= xs.min() and xs.max() <= at[0] + reach
+    assert at[1] - reach <= ys.min() and ys.max() <= at[1] + reach
+
+
+GAME = None
+
+
+def the_game():
+    """Одна игра на весь прогон: сборка стоит секунды, а нам нужна только раскладка."""
+    global GAME
+    if GAME is None:
+        os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+        import main
+        GAME = main.Game(seed=0)
+    return GAME
+
+
+def shuffle_panel(game, rng):
+    """Подставить в панель случайные, в том числе непомерные, значения."""
+    import main
+    import train
+
+    game.rounds = int(rng.integers(0, 1000000))
+    game.gen = int(rng.integers(0, 100000))
+    game.paused = bool(rng.integers(0, 2))
+    game.state = str(rng.choice([main.TRAINING, main.SHOWCASE, main.DONE]))
+    game.totals = dict(stats.EMPTY, rounds=int(rng.integers(0, 1000000)),
+                       finished=int(rng.integers(0, 1000000)),
+                       best_time=float(rng.uniform(0.0, 100000.0)))
+    if rng.integers(0, 2):
+        game.history = [train.GenStats(gen=int(rng.integers(0, 100000)),
+                                       best=float(rng.uniform(0.0, 1e7)),
+                                       mean=float(rng.uniform(0.0, 1e7)),
+                                       alive=int(rng.integers(0, 200)),
+                                       finished=int(rng.integers(0, 200)),
+                                       best_cp=int(rng.integers(0, 200)),
+                                       steps=int(rng.integers(0, 100000)),
+                                       best_time=float(rng.uniform(0.0, 100000.0)))]
+    else:
+        game.history = []
+    game.message_left = int(rng.integers(0, 2)) * 10
+    game.message = "".join(rng.choice(list("абвгдеж жзийклмн 0123456789"),
+                                      int(rng.integers(0, 120))))
+
+
+@check("панель: статистика не выходит за панель и не задевает виджеты")
+def _(rng):
+    import render
+    game = the_game()
+    shuffle_panel(game, rng)
+
+    game.screen.fill(render.BG)
+    game.draw_stats()
+    mask = ink(game.screen, render.BG)
+    assert mask.any(), "статистика не нарисовалась"
+
+    xs = np.argwhere(mask.any(axis=1)).ravel()
+    ys = np.argwhere(mask.any(axis=0)).ravel()
+    # Вправо пиксели не проверяем: панель прижата к правому краю окна, поэтому
+    # переполнение обрезается самой поверхностью и в маске его не видно. Ширину
+    # текста стерегут свойства про fit_text, вылет значка - свойство ниже.
+    panel = game.panel_rect
+    assert panel.left <= xs.min(), f"вылезла влево: {xs.min()}"
+    assert panel.top <= ys.min(), f"вылезла вверх: {ys.min()}"
+
+    top_widget = min(w.rect.top for w in game.ui.widgets.values())
+    assert ys.max() < top_widget, f"налезла на виджеты: низ {ys.max()}, виджет с {top_widget}"
+
+
+@check("панель: значок машинки не упирается в край окна")
+def _(rng):
+    import main
+    # Считаем, а не смотрим на пиксели: за краем окна их просто нет.
+    # И не по случайной машинке, а по объявленному потолку размеров - до края
+    # достаёт примерно каждая сотая, случайная выборка ловила бы поломку изредка.
+    longest = car.HALF_SIZE_MAX * np.sqrt(car.ASPECT_MAX)
+    right = cfg.WINDOW_W - main.BADGE_INSET + longest * main.BADGE_SCALE
+    assert right < cfg.WINDOW_W, f"значок доходит до {right:.1f} при окне {cfg.WINDOW_W}"
+    # и заодно: настоящая машинка не длиннее объявленного потолка
+    veh = car.random_car(rng)
+    assert float(np.abs(veh.stacked[:, 0]).max()) <= longest + 1e-9
+
+
+@check("панель: виджеты не выходят за панель")
+def _(rng):
+    import render
+    game = the_game()
+    shuffle_panel(game, rng)
+
+    game.screen.fill(render.BG)
+    game.ui.widgets["graph"].draw(game.screen, game.history)
+    game.ui.draw(game.screen)
+    mask = ink(game.screen, render.BG)
+    xs = np.argwhere(mask.any(axis=1)).ravel()
+    ys = np.argwhere(mask.any(axis=0)).ravel()
+    panel = game.panel_rect
+    assert panel.left <= xs.min() and xs.max() < panel.right
+    assert panel.top <= ys.min() and ys.max() < panel.bottom
+
+
 # ---------------------------------------------------------------- прочее
 
 @check("трасса: сложность монотонно ослабляет требование к радиусу")
