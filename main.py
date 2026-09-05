@@ -337,9 +337,12 @@ class Game:
         x = self.panel_rect.left + self.ui.pad
         y = self.panel_rect.top + self.ui.pad
 
+        width = self.panel_rect.width - 2 * self.ui.pad
+
         def line(text, colour=render.TEXT, step=18):
             nonlocal y
-            self.screen.blit(self.font.render(text, True, colour), (x, y))
+            shown = ui.fit_text(self.font, text, width)
+            self.screen.blit(self.font.render(shown, True, colour), (x, y))
             y += step
 
         title = "ПАУЗА" if self.paused else STATE_NAME[self.state]

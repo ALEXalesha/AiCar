@@ -16,6 +16,15 @@ KNOB = (206, 214, 230)
 HOVER = (74, 82, 99)
 
 
+def fit_text(font, text, width, tail="…"):
+    if font is None or font.size(text)[0] <= width:
+        return text
+    trimmed = text
+    while trimmed and font.size(trimmed + tail)[0] > width:
+        trimmed = trimmed[:-1]
+    return trimmed + tail
+
+
 class Slider:
     height = SLIDER_H
 
