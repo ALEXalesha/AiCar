@@ -8,7 +8,7 @@ import cppn
 import evolution
 import track
 
-DATASET_FILE = "saves/track_dataset.npz"
+DATASET_FILE = cfg.DATASET_FILE
 
 
 def normalise(radii):

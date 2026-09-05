@@ -1,3 +1,7 @@
+import argparse
+import os
+import sys
+
 import numpy as np
 import pygame
 
@@ -10,6 +14,7 @@ import race
 import render
 import sound
 import stats
+import paths
 import track
 import trackgen
 import train
@@ -310,8 +315,46 @@ class Game:
         pygame.quit()
 
 
-def main():
-    Game().run()
+def selftest(report_path, frames=400):
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
+    game = Game(seed=0)
+    game.ui.widgets["speed"].index = 2
+    for _ in range(frames):
+        game.advance()
+        game.screen.fill(render.BG)
+        game.draw_field()
+        game.draw_panel()
+        if game.state == DONE:
+            break
+
+    lines = [
+        f"запуск из архива: {paths.frozen()}",
+        f"папка данных:     {paths.data_dir()}",
+        f"модель трасс:     {'есть' if game.generator else 'нет'} ({cfg.MODEL_FILE})",
+        f"звук:             {'есть' if game.audio.enabled else 'нет'}",
+        f"трасса:           длина {game.track.length:.0f}, чекпоинтов {game.track.n_checkpoints}",
+        f"обучение:         поколений {len(game.history)}, состояние {game.state}",
+        f"лучший результат: {game.history[-1].best:.0f}" if game.history else "лучший результат: -",
+        "OK",
+    ]
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return lines
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="AI Car Racing")
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--selftest", metavar="ФАЙЛ", help="прогнать раунд без окна и записать отчёт")
+    args = ap.parse_args(argv)
+
+    if args.selftest:
+        for line in selftest(args.selftest):
+            print(line)
+        return
+    Game(seed=args.seed).run()
 
 
 if __name__ == "__main__":
