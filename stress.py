@@ -859,29 +859,60 @@ def _(rng):
 @check("панель: любой текст обрезается по ширине")
 def _(rng):
     import pygame
-    import ui
+    import render
     pygame.init()
     font = pygame.font.SysFont("consolas", int(rng.integers(9, 24)))
     width = int(rng.integers(20, 400))
     alphabet = "абвгдеёжзиклмнопрстуфхцчшщыэюя 0123456789"
     text = "".join(rng.choice(list(alphabet), int(rng.integers(0, 200))))
-    assert font.size(ui.fit_text(font, text, width))[0] <= width
+    assert font.size(render.fit_text(font, text, width))[0] <= width
 
 
 @check("панель: короткий текст не трогается")
 def _(rng):
     import pygame
-    import ui
+    import render
     pygame.init()
     font = pygame.font.SysFont("consolas", 15)
     text = "".join(rng.choice(list("абвгд "), int(rng.integers(0, 8))))
-    assert ui.fit_text(font, text, 400) == text
+    assert render.fit_text(font, text, 400) == text
+
+
+@check("телеметрия: ничего не выходит за окошко")
+def _(rng):
+    import pygame
+    import render
+    pygame.init()
+    font = pygame.font.SysFont("consolas", 15)
+    box = pygame.Rect(30, 30, render.HUD_W, render.HUD_H)
+    surf = pygame.Surface((box.width + 60, box.height + 60))
+    OUTSIDE = (255, 0, 255)
+    surf.fill(OUTSIDE)
+
+    veh = car.random_car(rng)
+    watch = {
+        "index": int(rng.integers(0, 1000)),
+        "alive": bool(rng.integers(0, 2)),
+        "finished": bool(rng.integers(0, 2)),
+        "rays": rng.uniform(0.0, 1.0, cfg.N_RAYS),
+        "speed": float(rng.uniform(0.0, 100000.0)),
+        "steer": float(rng.uniform(-1.0, 1.0)),
+        "throttle": float(rng.uniform(-1.0, 1.0)),
+        "cp": f"{int(rng.integers(0, 100000))}/{int(rng.integers(0, 100000))}",
+    }
+    render.draw_telemetry(surf, box, font, veh, watch)
+
+    pixels = pygame.surfarray.array3d(surf)
+    outside = np.ones(pixels.shape[:2], dtype=bool)
+    outside[box.left:box.right, box.top:box.bottom] = False
+    painted = np.any(pixels != np.array(OUTSIDE), axis=2) & outside
+    assert not painted.any(), f"краска за окошком в {np.argwhere(painted)[0].tolist()}"
 
 
 @check("сохранения: строка итогов влезает в панель после обрезки")
 def _(rng):
     import pygame
-    import ui
+    import render
     pygame.init()
     font = pygame.font.SysFont("consolas", 15)
     rounds = int(rng.integers(0, 1000000))
@@ -889,7 +920,7 @@ def _(rng):
                   finished=int(rng.integers(0, rounds + 1)),
                   best_time=float(rng.uniform(0.0, 100000.0)))
     width = cfg.PANEL_W - 28
-    assert font.size(ui.fit_text(font, stats.summary(totals), width))[0] <= width
+    assert font.size(render.fit_text(font, stats.summary(totals), width))[0] <= width
 
 
 # ---------------------------------------------------------------- прогон

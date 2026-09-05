@@ -87,3 +87,66 @@ def test_car_polygon_keeps_its_size():
     before = np.linalg.norm(shape[0] - shape[1])
     after = np.linalg.norm(moved[0] - moved[1])
     assert abs(before - after) < 1e-9
+
+
+def telemetry_box(watch, colour=(255, 0, 255)):
+    import os
+
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    import car
+
+    pygame.init()
+    font = pygame.font.SysFont("consolas", 15)
+    box = pygame.Rect(30, 30, render.HUD_W, render.HUD_H)
+    surf = pygame.Surface((box.width + 60, box.height + 60))
+    surf.fill(colour)
+    render.draw_telemetry(surf, box, font, car.random_car(np.random.default_rng(0)), watch)
+
+    pixels = pygame.surfarray.array3d(surf)
+    outside = np.ones(pixels.shape[:2], dtype=bool)
+    outside[box.left:box.right, box.top:box.bottom] = False
+    return np.any(pixels != np.array(colour), axis=2) & outside
+
+
+def watching(**over):
+    base = dict(index=13, alive=True, finished=False,
+                rays=np.full(7, 0.5), speed=208.0, steer=0.3, throttle=0.6, cp="2/44")
+    base.update(over)
+    return base
+
+
+def test_the_telemetry_stays_inside_its_box():
+    assert not telemetry_box(watching()).any()
+
+
+def test_the_telemetry_stays_inside_for_the_longest_values():
+    longest = watching(index=999999, alive=False, finished=False,
+                       speed=999999.0, cp="999999/999999")
+    assert not telemetry_box(longest).any()
+
+
+def bottom_line_right_edge(speed):
+    """Правый край нижней строки.
+
+    Ищем ровно цвет TEXT: фон окошка и рамка другого цвета, заголовок красится
+    цветом машинки, подписи - TEXT_DIM. Значит единственное, что найдётся - сама
+    строка "скорость ... чекпоинт ...".
+    """
+    import car
+
+    pygame.init()
+    font = pygame.font.SysFont("consolas", 15)
+    box = pygame.Rect(30, 30, render.HUD_W, render.HUD_H)
+    surf = pygame.Surface((box.width + 60, box.height + 60))
+    surf.fill(render.BG)
+    render.draw_telemetry(surf, box, font,
+                          car.random_car(np.random.default_rng(0)), watching(speed=speed))
+
+    text = np.all(pygame.surfarray.array3d(surf) == np.array(render.TEXT), axis=2)
+    assert text.any(), "нижняя строка не нашлась"
+    return int(np.argwhere(text.any(axis=1)).max())
+
+
+def test_the_checkpoint_does_not_move_when_the_speed_changes():
+    edges = {bottom_line_right_edge(speed) for speed in (0.0, 208.0, 99999.0)}
+    assert len(edges) == 1

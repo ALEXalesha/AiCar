@@ -27,7 +27,8 @@ TEXT_DIM = (138, 146, 164)
 
 PATH_WIDTH = 2
 
-HUD_W, HUD_H, HUD_PAD = 236, 122, 12
+HUD_W, HUD_H, HUD_PAD = 252, 134, 12
+GRIP_W, HUD_GAP = 16, 12
 HUD_BG = (22, 25, 32)
 BAR_BG = (54, 59, 71)
 BAR_NEAR = (222, 96, 88)
@@ -172,6 +173,15 @@ def _bar(surf, rect, share, colour, centred=False):
                          border_radius=2)
 
 
+def fit_text(font, text, width, tail="…"):
+    if font is None or font.size(text)[0] <= width:
+        return text
+    trimmed = text
+    while trimmed and font.size(trimmed + tail)[0] > width:
+        trimmed = trimmed[:-1]
+    return trimmed + tail
+
+
 def hud_rect(view):
     return pygame.Rect(view.left + HUD_PAD, view.bottom - HUD_H - HUD_PAD, HUD_W, HUD_H)
 
@@ -181,16 +191,18 @@ def draw_telemetry(surf, box, font, veh, watch):
     pygame.draw.rect(surf, MIDLINE, box, 1, border_radius=6)
 
     x, y = box.left + 10, box.top + 8
+    inner = box.width - 20
     state = "едет" if watch["alive"] else ("финиш" if watch["finished"] else "разбилась")
-    surf.blit(font.render(f"машинка #{watch['index']}  {state}", True, veh.color), (x, y))
-    grip = pygame.Rect(box.right - 26, box.top + 8, 16, 3)
+    title = fit_text(font, f"машинка #{watch['index']}  {state}", inner - GRIP_W)
+    surf.blit(font.render(title, True, veh.color), (x, y))
+    grip = pygame.Rect(box.right - 10 - GRIP_W, box.top + 8, GRIP_W, 3)
     for row in range(3):
         pygame.draw.rect(surf, BAR_BG, grip.move(0, row * 5))
     y += 20
 
     surf.blit(font.render("датчики", True, TEXT_DIM), (x, y))
     y += 18
-    slot = (HUD_W - 20) // cfg.N_RAYS
+    slot = inner // cfg.N_RAYS
     for i, value in enumerate(watch["rays"]):
         share = float(np.clip(value, 0.0, 1.0))
         colour = BAR_NEAR if share < 0.25 else BAR_FAR
@@ -203,11 +215,13 @@ def draw_telemetry(surf, box, font, veh, watch):
                                  ("газ", watch["throttle"],
                                   BAR_GAS if watch["throttle"] >= 0 else BAR_BRAKE)):
         surf.blit(font.render(label, True, TEXT_DIM), (x, y - 2))
-        _bar(surf, pygame.Rect(x + 44, y + 2, HUD_W - 64, 10), float(value), colour, centred=True)
+        _bar(surf, pygame.Rect(x + 44, y + 2, inner - 44, 10), float(value), colour, centred=True)
         y += 20
 
-    surf.blit(font.render(f"скорость {watch['speed']:.0f}   чекпоинт {watch['cp']}",
-                          True, TEXT), (x, y - 2))
+    left = fit_text(font, f"скорость {watch['speed']:.0f}", inner)
+    right = fit_text(font, f"чекпоинт {watch['cp']}", inner - font.size(left)[0] - HUD_GAP)
+    surf.blit(font.render(left, True, TEXT), (x, y - 2))
+    surf.blit(font.render(right, True, TEXT), (box.right - 10 - font.size(right)[0], y - 2))
 
 
 def draw_car_badge(surf, veh, at, scale, angle=0.0):
