@@ -27,10 +27,23 @@ DONE = "done"
 STATE_NAME = {TRAINING: "обучение", SHOWCASE: "показательный заезд", DONE: "заезд окончен"}
 SPEED_NAMES = ("x1", "x5", "x20", "без отрисовки")
 BRAIN_NAMES = ("с нуля", "продолжить")
+REPLAY_ONCE, REPLAY_LOOP, REPLAY_OFF = "один раз", "по кругу", "не показывать"
+REPLAY_NAMES = (REPLAY_ONCE, REPLAY_LOOP, REPLAY_OFF)
+WATCH_LEADER, WATCH_NONE = "leader", "none"
+
+LEVELS = (
+    ("лёгкий", 46, 0.4),
+    ("обычный", 40, 0.7),
+    ("сложный", 34, 1.0),
+    ("адский", 30, 1.0),
+)
+LEVEL_NAMES = tuple(name for name, _, _ in LEVELS)
+DEFAULT_LEVEL = 2
+PICK_RADIUS = 40.0
 GEN_CPPN, GEN_MODEL = "CPPN + эволюция", "обученная модель"
 
-STATS_H = 176
-GRAPH_H = 76
+STATS_H = 172
+GRAPH_H = 54
 MESSAGE_FRAMES = 150
 
 
@@ -48,13 +61,16 @@ class Game:
         self.rng = np.random.default_rng(seed)
         self.generator = trackgen.Generator() if trackgen.available() else None
         self.build_panel()
+        self.level_shown = DEFAULT_LEVEL
         self.audio = sound.SoundBank(self.ui.value("volume"))
         self.totals = stats.load_totals()
         self.message = ""
         self.message_left = 0
         self.paused = False
         self.best_brain = None
-        self.watched = None
+        self.watched = WATCH_LEADER
+        self.hud = render.hud_rect(self.view)
+        self.hud_grab = None
         self.last_fitness = None
         self.rounds = 0
         self.running = True
@@ -71,10 +87,12 @@ class Game:
         p.slider("width", "ширина трассы", 25, 80, cfg.TRACK_WIDTH, integer=True)
         p.slider("difficulty", "сложность", 0.0, 1.0, cfg.DIFFICULTY)
         p.slider("volume", "громкость", 0.0, 1.0, cfg.VOLUME)
+        p.toggle("level", "уровень", LEVEL_NAMES, DEFAULT_LEVEL)
         names = (GEN_CPPN, GEN_MODEL) if self.generator else (GEN_CPPN,)
         p.toggle("generator", "генератор", names)
         p.toggle("speed", "скорость показа", SPEED_NAMES)
         p.toggle("brain", "мозг", BRAIN_NAMES)
+        p.toggle("replay", "повтор заезда", REPLAY_NAMES)
         p.buttons([("round", "новый раунд"), ("track", "новая трасса")])
         p.buttons([("show", "заезд"), ("pause", "пауза")])
         p.buttons([("save", "сохранить"), ("load", "загрузить")])
@@ -121,7 +139,7 @@ class Game:
         self.rounds += 1
         self.paused = False
         self.state = TRAINING
-        self.watched = None
+        self.watched = WATCH_LEADER
         self.race = race.Race(self.track, self.field, self.car, self.brains)
 
     def say(self, text):
@@ -142,7 +160,10 @@ class Game:
         if self.race.n_finished or self.gen + 1 >= self.ui.value("generations"):
             self.totals = stats.record_round(self.totals, self.history)
             stats.save_totals(self.totals)
-            self.start_showcase()
+            if self.ui.value("replay") == REPLAY_OFF:
+                self.state = DONE
+            else:
+                self.start_showcase()
             return
 
         self.brains = evolution.evolve(self.brains, fit, self.rng,
@@ -179,6 +200,8 @@ class Game:
             return
         if self.state == TRAINING:
             self.next_generation()
+        elif self.ui.value("replay") == REPLAY_LOOP:
+            self.start_showcase()
         else:
             self.state = DONE
 
@@ -206,15 +229,41 @@ class Game:
         elif code == pygame.K_s and self.best_brain is not None:
             self.start_showcase()
         elif code == pygame.K_l:
-            self.watched = None
+            self.watched = WATCH_LEADER
+        elif code == pygame.K_n:
+            self.watched = WATCH_NONE
         elif pygame.K_1 <= code <= pygame.K_4:
             self.ui.widgets["speed"].index = code - pygame.K_1
 
     def click_field(self, pos):
-        if self.view.collidepoint(pos):
-            self.watched = self.race.nearest_to(self.camera.to_world(pos))
+        if not self.view.collidepoint(pos):
+            return
+        if self.telemetry() and self.hud.collidepoint(pos):
+            self.hud_grab = (pos[0] - self.hud.left, pos[1] - self.hud.top)
+            return
+        world = self.camera.to_world(pos)
+        index = self.race.nearest_to(world)
+        gap = float(np.linalg.norm(self.race.pos[index] - world))
+        self.watched = index if gap * self.camera.scale <= PICK_RADIUS else WATCH_NONE
+
+    def drag_hud(self, pos):
+        if self.hud_grab is None:
+            return
+        self.hud.topleft = (pos[0] - self.hud_grab[0], pos[1] - self.hud_grab[1])
+        self.hud.clamp_ip(self.view)
+
+    def apply_level(self):
+        index = self.ui.widgets["level"].index
+        if index == self.level_shown:
+            return
+        self.level_shown = index
+        _, width, difficulty = LEVELS[index]
+        self.ui.widgets["width"].value = width
+        self.ui.widgets["difficulty"].value = difficulty
+        self.say(f"уровень {LEVEL_NAMES[index]}, трасса {width} px")
 
     def apply_buttons(self):
+        self.apply_level()
         if self.ui.clicked("round"):
             self.new_round(new_car=True)
         if self.ui.clicked("track"):
@@ -248,8 +297,13 @@ class Game:
         self.say("мозг загружен, поколение перезапущено")
 
     def telemetry(self):
-        index = self.race.watch(self.watched)
-        self.watched = index
+        if self.watched == WATCH_NONE:
+            return None
+        if self.watched == WATCH_LEADER:
+            index = self.race.leader
+        else:
+            index = self.race.watch(self.watched)
+            self.watched = index
         obs = self.race.observe()
         action = brain.forward(self.race.brains, obs)
         return {
@@ -272,10 +326,12 @@ class Game:
             render.draw_path(self.screen, self.camera, self.path, render._lighter(self.car.color))
 
         watch = self.telemetry()
-        render.draw_cars(self.screen, self.camera, self.race, self.car, watch["index"])
-        render.draw_rays(self.screen, self.camera, self.race.pos[watch["index"]],
-                         self.race.angle[watch["index"]], watch["rays"] * cfg.RAY_MAX)
-        render.draw_telemetry(self.screen, self.view, self.font, self.car, watch)
+        render.draw_cars(self.screen, self.camera, self.race, self.car,
+                         watch["index"] if watch else None)
+        if watch:
+            render.draw_rays(self.screen, self.camera, self.race.pos[watch["index"]],
+                             self.race.angle[watch["index"]], watch["rays"] * cfg.RAY_MAX)
+            render.draw_telemetry(self.screen, self.hud, self.font, self.car, watch)
 
     def draw_stats(self):
         x = self.panel_rect.left + self.ui.pad
@@ -332,7 +388,11 @@ class Game:
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     self.click_field(event.pos)
                     self.ui.handle(event)
+                elif event.type == pygame.MOUSEMOTION and self.hud_grab is not None:
+                    self.drag_hud(event.pos)
                 else:
+                    if event.type == pygame.MOUSEBUTTONUP:
+                        self.hud_grab = None
                     self.ui.handle(event)
             self.apply_buttons()
 
