@@ -28,7 +28,7 @@ TEXT_DIM = (138, 146, 164)
 PATH_WIDTH = 2
 
 HUD_W, HUD_H, HUD_PAD = 252, 134, 12
-GRIP_W, HUD_GAP = 16, 12
+GRIP_W, HUD_GAP, CLOSE_W = 16, 12, 13
 HUD_BG = (22, 25, 32)
 BAR_BG = (54, 59, 71)
 BAR_NEAR = (222, 96, 88)
@@ -186,6 +186,11 @@ def hud_rect(view):
     return pygame.Rect(view.left + HUD_PAD, view.bottom - HUD_H - HUD_PAD, HUD_W, HUD_H)
 
 
+def hud_close_rect(box):
+    """Крестик слева от хвата: закрывает слежение вместе с окошком."""
+    return pygame.Rect(box.right - 10 - GRIP_W - 10 - CLOSE_W, box.top + 6, CLOSE_W, CLOSE_W)
+
+
 def draw_telemetry(surf, box, font, veh, watch):
     pygame.draw.rect(surf, HUD_BG, box, border_radius=6)
     pygame.draw.rect(surf, MIDLINE, box, 1, border_radius=6)
@@ -193,11 +198,17 @@ def draw_telemetry(surf, box, font, veh, watch):
     x, y = box.left + 10, box.top + 8
     inner = box.width - 20
     state = "едет" if watch["alive"] else ("финиш" if watch["finished"] else "разбилась")
-    title = fit_text(font, f"машинка #{watch['index']}  {state}", inner - GRIP_W)
+    title = fit_text(font, f"машинка #{watch['index']}  {state}",
+                     inner - GRIP_W - CLOSE_W - 20)
     surf.blit(font.render(title, True, veh.color), (x, y))
     grip = pygame.Rect(box.right - 10 - GRIP_W, box.top + 8, GRIP_W, 3)
     for row in range(3):
         pygame.draw.rect(surf, BAR_BG, grip.move(0, row * 5))
+
+    cross = hud_close_rect(box)
+    for a, b in (((cross.left, cross.top), (cross.right - 1, cross.bottom - 1)),
+                 ((cross.left, cross.bottom - 1), (cross.right - 1, cross.top))):
+        pygame.draw.line(surf, TEXT_DIM, a, b, 2)
     y += 20
 
     surf.blit(font.render("датчики", True, TEXT_DIM), (x, y))

@@ -242,3 +242,25 @@ def test_watch_ignores_an_index_out_of_range():
     r.cp[:] = [0, 0, 0, 0, 7, 0]
     assert r.watch(99) == 4
     assert r.watch(-1) == 4
+
+
+def test_the_leader_is_the_best_of_those_still_driving():
+    r = watchable()
+    r.cp[:] = [0, 0, 9, 0, 4, 0]
+    r.alive[:] = [True, True, False, True, True, True]
+    assert r.leader == 4
+
+
+def test_the_leader_falls_back_to_the_best_wreck_when_nobody_drives():
+    r = watchable()
+    r.cp[:] = [0, 0, 9, 0, 4, 0]
+    r.alive[:] = False
+    assert r.leader == 2
+
+
+def test_a_finished_car_can_lead_even_though_it_stopped():
+    r = watchable()
+    r.cp[:] = r.last_cp
+    r.alive[:] = False
+    r.finish_step[3] = 100
+    assert r.leader == 3

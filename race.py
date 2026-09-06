@@ -83,7 +83,19 @@ class Race:
 
     @property
     def leader(self):
-        return int(np.argmax(self.fitness()))
+        """Лучшая из едущих; если все стоят - лучшая вообще.
+
+        Считать лидером просто лучшего по приспособленности нельзя: как только
+        самая продвинувшаяся машинка разбивается, слежение прилипает к обломкам
+        и показывает застывшие цифры, пока остальные ещё едут. Разбившаяся
+        остаётся лидером только когда живых не осталось - в конце заезда и в
+        показательном заезде это как раз то, что нужно показать.
+        """
+        fit = self.fitness()
+        if self.alive.any():
+            alive = np.flatnonzero(self.alive)
+            return int(alive[int(np.argmax(fit[alive]))])
+        return int(np.argmax(fit))
 
     def nearest_alive(self, index):
         alive = np.flatnonzero(self.alive)
