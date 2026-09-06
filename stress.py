@@ -8,6 +8,8 @@ import numpy as np
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
+import pygame
+
 import brain
 import car
 import config as cfg
@@ -503,6 +505,21 @@ def _(rng):
     assert np.all(r.cp >= 0) and np.all(r.cp <= r.last_cp)
 
 
+@check("заезд: лидер жив, пока хоть кто-то едет", SLOW)
+def _(rng):
+    r = small_race(rng)
+    for _ in range(int(rng.integers(20, 400))):
+        r.step()
+        leader = r.leader
+        assert 0 <= leader < r.n
+        if r.alive.any():
+            assert r.alive[leader], "лидером стали обломки, хотя кто-то ещё едет"
+            best = r.fitness()[r.alive].max()
+            assert r.fitness()[leader] >= best - 1e-9, "лидер не лучший из живых"
+        if r.done:
+            break
+
+
 @check("заезд: слежение всегда даёт существующую машинку", SLOW)
 def _(rng):
     r = small_race(rng)
@@ -944,6 +961,9 @@ def shuffle_panel(game, rng):
     game.message_left = int(rng.integers(0, 2)) * 10
     game.message = "".join(rng.choice(list("абвгдеж жзийклмн 0123456789"),
                                       int(rng.integers(0, 120))))
+    # Машинку тоже перебираем: от неё зависит ширина значка в панели, а значит и
+    # место, остающееся строкам. На одной машинке проверка ничего не заметит.
+    game.car = car.random_car(rng)
 
 
 @check("панель: статистика не выходит за панель и не задевает виджеты")
@@ -968,6 +988,40 @@ def _(rng):
 
     top_widget = min(w.rect.top for w in game.ui.widgets.values())
     assert ys.max() < top_widget, f"налезла на виджеты: низ {ys.max()}, виджет с {top_widget}"
+
+
+@check("панель: строки статистики не заезжают под значок машинки")
+def _(rng):
+    import main
+    import render
+    game = the_game()
+    shuffle_panel(game, rng)
+
+    # Значок рисуется поверх текста, поэтому наложение после отрисовки не видно:
+    # текст просто закрашен. Подменяем отрисовку значка на запись его координат,
+    # получаем настоящий прямоугольник и смотрим, попал ли в него текст.
+    spot = {}
+    drawn = render.draw_car_badge
+
+    def remember(surf, veh, at, scale, angle=0.0):
+        spot["at"], spot["scale"] = at, scale
+
+    render.draw_car_badge = remember
+    try:
+        game.screen.fill(render.BG)
+        game.draw_stats()
+    finally:
+        render.draw_car_badge = drawn
+
+    assert spot, "значок не рисовался"
+    reach = main.badge_reach(game.car)
+    tall = float(np.abs(game.car.stacked[:, 1]).max()) * spot["scale"]
+    box = pygame.Rect(int(spot["at"][0] - reach), int(spot["at"][1] - tall),
+                      int(2 * reach), int(2 * tall))
+
+    mask = ink(game.screen, render.BG)
+    under = mask[box.left:box.right, box.top:box.bottom]
+    assert not under.any(), f"текст под значком: {int(under.sum())} точек в {tuple(box)}"
 
 
 @check("панель: значок машинки не упирается в край окна")
@@ -1020,9 +1074,9 @@ def poke(game, rng):
         game.key(int(rng.choice([pygame.K_SPACE, pygame.K_l, pygame.K_n, pygame.K_s,
                                  pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4])))
     elif roll == 1:
-        # "новая трасса" и "новый раунд" не трогаем: каждая пересобирает мир и
-        # стоит секунды. Их путь всё равно проходится при сборке игры.
-        click(game, str(rng.choice(["show", "pause", "save", "load"])))
+        # "новую трассу" не трогаем: она эволюционирует трассу и стоит секунды.
+        # "новая машина" трассу не пересобирает, поэтому дешёвая и участвует.
+        click(game, str(rng.choice(["show", "pause", "save", "load", "car"])))
     elif roll == 2:
         name = str(rng.choice(["mut_sigma", "elite_frac", "pop_size", "generations", "volume"]))
         bar = game.ui.widgets[name]

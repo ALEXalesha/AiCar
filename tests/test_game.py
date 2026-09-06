@@ -21,6 +21,18 @@ def fresh():
     g.watched = main.WATCH_LEADER
     g.hud = main.render.hud_rect(g.view)
     g.hud_grab = None
+    g.race.pos[:] = g.track.start_pos
+    return g
+
+
+def spread(g):
+    """Развести машинки по трассе.
+
+    На старте все 50 стоят в одной точке, и клик по координатам любой из них
+    выбирает нулевую. Для проверок выбора машинки мышью это бесполезно.
+    """
+    step = len(g.track.center) // g.race.n
+    g.race.pos[:] = g.track.center[:g.race.n * step:step]
     return g
 
 
@@ -50,12 +62,60 @@ def test_telemetry_reports_what_the_network_sees():
     assert -1.0 <= watch["throttle"] <= 1.0
 
 
-def test_clicking_a_car_starts_watching_it():
-    g = fresh()
-    target = 11
-    point = g.camera.to_screen(g.race.pos[target])[0]
+def click_car(g, index):
+    point = g.camera.to_screen(g.race.pos[index])[0]
     g.click_field((int(point[0]), int(point[1])))
-    assert g.race.watch(g.watched) in range(g.race.n)
+
+
+def a_pickable_car(g):
+    """Машинка, по которой клик попадёт именно в неё, и не та, что показана."""
+    shown = g.telemetry()["index"]
+    for i in range(g.race.n):
+        point = g.camera.to_screen(g.race.pos[i])[0]
+        if i != shown and g.race.nearest_to(g.camera.to_world(point)) == i:
+            return i
+    raise AssertionError("не нашлось машинки, по которой можно кликнуть")
+
+
+def test_clicking_a_car_starts_watching_it():
+    g = spread(fresh())
+    target = a_pickable_car(g)
+    click_car(g, target)
+    assert g.watched == target
+    assert g.telemetry()["index"] == target
+
+
+def test_clicking_the_watched_car_again_stops_watching():
+    g = spread(fresh())
+    target = a_pickable_car(g)
+    click_car(g, target)
+    click_car(g, target)
+    assert g.watched == main.WATCH_NONE
+    assert g.telemetry() is None
+
+
+def test_clicking_a_car_after_that_brings_the_panel_back():
+    g = spread(fresh())
+    target = a_pickable_car(g)
+    click_car(g, target)
+    click_car(g, target)
+    click_car(g, target)
+    assert g.telemetry() is not None
+
+
+def test_the_cross_closes_the_telemetry():
+    g = fresh()
+    g.click_field(main.render.hud_close_rect(g.hud).center)
+    assert g.watched == main.WATCH_NONE
+    assert g.telemetry() is None
+    assert g.hud_grab is None
+
+
+def test_the_cross_is_not_the_drag_handle():
+    g = fresh()
+    cross = main.render.hud_close_rect(g.hud)
+    g.click_field((cross.left - 20, cross.centery))
+    assert g.hud_grab is not None
     assert g.watched != main.WATCH_NONE
 
 

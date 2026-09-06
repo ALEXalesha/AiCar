@@ -87,9 +87,23 @@ def average_gens_to_finish(totals):
 
 
 def summary(totals):
+    """Итоги одной строкой. Слитно, для тестов и консоли."""
+    left, right = summary_parts(totals)
+    return left if not right else f"{left}  {right}"
+
+
+def summary_parts(totals, short=False):
+    """Итоги двумя половинами: счётчики влево, рекорд вправо.
+
+    Панель рисует их по разным краям, поэтому длина каждой считается отдельно.
+    `short` даёт запасной, укороченный вид подписи рекорда: при четырёхзначных
+    счётчиках полное слово уже не влезает, а само число обрезать нельзя - оно и
+    есть то, ради чего строка существует.
+    """
     if not totals["rounds"]:
-        return "всего: раундов нет"
-    line = f"всего {totals['rounds']}  доехало {totals['finished']}"
-    if totals["best_time"] is not None:
-        line += f"  рекорд {totals['best_time']:.1f}с"
-    return line
+        return "всего: раундов нет", ""
+    left = f"всего {totals['rounds']}  доехало {totals['finished']}"
+    if totals["best_time"] is None:
+        return left, ""
+    label = "рек" if short else "рекорд"
+    return left, f"{label} {totals['best_time']:.1f}с"

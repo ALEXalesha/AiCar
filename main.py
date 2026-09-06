@@ -43,7 +43,12 @@ PICK_RADIUS = 40.0
 GEN_CPPN, GEN_MODEL = "CPPN + эволюция", "обученная модель"
 
 STATS_H = 172
-BADGE_INSET, BADGE_SCALE = 52, 2.4
+BADGE_INSET, BADGE_SCALE = 52, 1.8
+
+
+def badge_reach(veh):
+    """Половина ширины значка в пикселях: сколько места он отнимает у строк."""
+    return float(np.abs(veh.stacked[:, 0]).max()) * BADGE_SCALE
 GRAPH_H = 54
 MESSAGE_FRAMES = 150
 
@@ -94,7 +99,7 @@ class Game:
         p.toggle("speed", "скорость показа", SPEED_NAMES)
         p.toggle("brain", "мозг", BRAIN_NAMES)
         p.toggle("replay", "повтор заезда", REPLAY_NAMES)
-        p.buttons([("round", "трасса и машина"), ("track", "только трасса")])
+        p.buttons([("track", "новая трасса"), ("car", "новая машина")])
         p.buttons([("show", "заезд"), ("pause", "пауза")])
         p.buttons([("save", "сохранить"), ("load", "загрузить")])
         self.ui = p
@@ -119,13 +124,20 @@ class Game:
             return self.generator.make_track(self.rng, width, difficulty)
         return track.evolve_track(self.rng, width, difficulty)
 
-    def new_round(self, new_car=True):
-        self.splash("генерация трассы...")
-        self.track = self.make_track()
-        self.field = field.build_for_track(self.track)
+    def new_round(self, new_track=True, new_car=True):
+        """Начать раунд заново, поменяв трассу, машинку или и то, и другое.
+
+        Обе части раунда меняются по отдельности: посмотреть, как одна и та же
+        машинка справляется с разными трассами, и как разные машинки справляются
+        с одной трассой - это два разных опыта, и кнопка на каждый своя.
+        """
+        if new_track or not hasattr(self, "track"):
+            self.splash("генерация трассы...")
+            self.track = self.make_track()
+            self.field = field.build_for_track(self.track)
+            self.camera = render.Camera(self.view, self.track.lo, self.track.hi)
         if new_car or not hasattr(self, "car"):
             self.car = car.random_car(self.rng)
-        self.camera = render.Camera(self.view, self.track.lo, self.track.hi)
 
         n = self.ui.value("pop_size")
         if self.keep_brain and self.best_brain is not None:
@@ -224,9 +236,11 @@ class Game:
         elif code == pygame.K_SPACE:
             self.paused = not self.paused
         elif code == pygame.K_r:
-            self.new_round(new_car=True)
+            self.new_round(new_track=True, new_car=True)
         elif code == pygame.K_t:
-            self.new_round(new_car=False)
+            self.new_round(new_track=True, new_car=False)
+        elif code == pygame.K_m:
+            self.new_round(new_track=False, new_car=True)
         elif code == pygame.K_s and self.best_brain is not None:
             self.start_showcase()
         elif code == pygame.K_l:
@@ -239,13 +253,24 @@ class Game:
     def click_field(self, pos):
         if not self.view.collidepoint(pos):
             return
-        if self.telemetry() and self.hud.collidepoint(pos):
-            self.hud_grab = (pos[0] - self.hud.left, pos[1] - self.hud.top)
+        watch = self.telemetry()
+        if watch and self.hud.collidepoint(pos):
+            if render.hud_close_rect(self.hud).collidepoint(pos):
+                self.watched = WATCH_NONE
+            else:
+                self.hud_grab = (pos[0] - self.hud.left, pos[1] - self.hud.top)
             return
+
         world = self.camera.to_world(pos)
         index = self.race.nearest_to(world)
-        gap = float(np.linalg.norm(self.race.pos[index] - world))
-        self.watched = index if gap * self.camera.scale <= PICK_RADIUS else WATCH_NONE
+        if float(np.linalg.norm(self.race.pos[index] - world)) * self.camera.scale > PICK_RADIUS:
+            self.watched = WATCH_NONE
+            return
+        # Повторный клик по той же машинке снимает слежение. Сравниваем с тем,
+        # что сейчас показано, а не с self.watched: в режиме "за лидером" там
+        # не номер, но на экране всё равно конкретная машинка.
+        already = watch is not None and watch["index"] == index
+        self.watched = WATCH_NONE if already else index
 
     def drag_hud(self, pos):
         if self.hud_grab is None:
@@ -265,10 +290,10 @@ class Game:
 
     def apply_buttons(self):
         self.apply_level()
-        if self.ui.clicked("round"):
-            self.new_round(new_car=True)
         if self.ui.clicked("track"):
-            self.new_round(new_car=False)
+            self.new_round(new_track=True, new_car=False)
+        if self.ui.clicked("car"):
+            self.new_round(new_track=False, new_car=True)
         if self.ui.clicked("show") and self.best_brain is not None:
             self.start_showcase()
         if self.ui.clicked("pause"):
@@ -293,9 +318,17 @@ class Game:
         self.best_brain = genome
         self.brains = self.seed_from(genome, self.ui.value("pop_size"))
         self.ui.widgets["brain"].index = 1
+        # Счётчик поколений и историю надо обнулить вместе с популяцией. Иначе
+        # загрузка посреди доигранного раунда оставляет gen выше предела, и
+        # первый же заезд закрывает раунд: статистика получает лишний раунд, а
+        # загруженный мозг - ни одного поколения обучения.
+        self.gen = 0
+        self.history = []
+        self.path = []
+        self.last_fitness = None
         self.state = TRAINING
         self.race = race.Race(self.track, self.field, self.car, self.brains)
-        self.say("мозг загружен, поколение перезапущено")
+        self.say("мозг загружен, обучение начато заново")
 
     def telemetry(self):
         if self.watched == WATCH_NONE:
@@ -341,11 +374,29 @@ class Game:
         y = self.panel_rect.top + self.ui.pad
 
         width = self.panel_rect.width - 2 * self.ui.pad
+        badge_column = self.panel_rect.width - BADGE_INSET - badge_reach(self.car) - self.ui.pad - 8
 
-        def line(text, colour=render.TEXT, step=18):
+        def line(text, colour=render.TEXT, step=18, room=None):
             nonlocal y
-            shown = render.fit_text(self.font, text, width)
+            shown = render.fit_text(self.font, text, width if room is None else room)
             self.screen.blit(self.font.render(shown, True, colour), (x, y))
+            y += step
+
+        def split_line(left, right, colour, step=18):
+            """Левая половина у левого края, правая у правого.
+
+            Так строка занимает всю ширину панели, а не половину, и растущие
+            числа съедают запас между половинами, а не вылезают за край.
+            """
+            nonlocal y
+            room = width - self.font.size(left)[0] - 8
+            if self.font.size(right)[0] > room:
+                left, right = stats.summary_parts(self.totals, short=True)
+                room = width - self.font.size(left)[0] - 8
+            right = render.fit_text(self.font, right, room)
+            self.screen.blit(self.font.render(left, True, colour), (x, y))
+            self.screen.blit(self.font.render(right, True, colour),
+                             (x + width - self.font.size(right)[0], y))
             y += step
 
         title = "ПАУЗА" if self.paused else STATE_NAME[self.state]
@@ -370,13 +421,24 @@ class Game:
             self.message_left -= 1
             line(self.message, render.LEADER_RING)
         else:
-            line(stats.summary(self.totals), render.TEXT_DIM)
+            left, right = stats.summary_parts(self.totals)
+            if right:
+                split_line(left, right, render.TEXT_DIM)
+            else:
+                line(left, render.TEXT_DIM)
 
-        line(f"трасса {self.track.length:.0f} px  поворот {self.track.min_radius:.0f}",
-             render.TEXT_DIM, 17)
-        line(f"машина {self.car.max_speed:.0f} px/s руль {self.car.max_steer:.2f}",
-             render.TEXT_DIM, 17)
-        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - BADGE_INSET, y - 14),
+        # Последние две строки делят место со значком машинки, поэтому им
+        # отведена своя, укороченная ширина: значок стоит справа и наезжал бы
+        # на хвост строки при любых значениях. Единицы убраны ради места -
+        # "трасса" и "машина" и так говорят, что это за числа.
+        line(f"трасса {self.track.length:.0f} радиус {self.track.min_radius:.0f}",
+             render.TEXT_DIM, 17, badge_column)
+        line(f"машина {self.car.max_speed:.0f} руль {self.car.max_steer:.2f}",
+             render.TEXT_DIM, 17, badge_column)
+        # Значок стоит по центру этих двух строк: они занимают 34 пикселя, и
+        # масштаб 1.8 подобран так, чтобы значок в эту полосу помещался. При
+        # 2.4 он был 47 пикселей высотой и задевал строку итогов сверху.
+        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - BADGE_INSET, y - 17),
                               BADGE_SCALE)
 
     def draw_panel(self):
