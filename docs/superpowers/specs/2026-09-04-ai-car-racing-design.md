@@ -296,9 +296,9 @@ pytest, только то, что проверяется без графики:
 
 ## 16. Репозиторий
 
-Git, remote `origin` = `http://gitea.local/ALEXaloysha/AiCar.git` (Gitea в локальной сети).
+Git, remote `origin` - Gitea в локальной сети.
 
-Автор коммитов: `ALEXaloysha <203467574+ALEXalesha@users.noreply.github.com>`.
+Автор коммитов берётся из настроек репозитория (`git config user.name` / `user.email`).
 
 Коммит после каждого законченного куска: спецификация, план, затем каждый модуль вместе со своей документацией и тестами.
 
