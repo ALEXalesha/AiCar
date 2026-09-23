@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 
 import numpy as np
 
@@ -13,6 +14,21 @@ def _ensure_dir(path):
     folder = os.path.dirname(path)
     if folder:
         os.makedirs(folder, exist_ok=True)
+
+
+def use_sandbox(prefix):
+    """Увести запись мозгов и счётчиков во временную папку.
+
+    Для всего, что играет настоящий раунд не ради игрока: самопроверка, проверка
+    инвариантов, сборка кадров для README. Конец раунда пишет статистику, и без этого
+    каждый такой прогон добавлял игроку раунд, которого он не играл.
+    """
+    folder = os.path.join(tempfile.mkdtemp(prefix=prefix), "saves")
+    os.makedirs(folder, exist_ok=True)
+    cfg.SAVE_DIR = folder
+    cfg.BRAIN_FILE = os.path.join(folder, "brains.npz")
+    cfg.STATS_FILE = os.path.join(folder, "stats.json")
+    return folder
 
 
 def save_brains(genomes, fitness, path=None):

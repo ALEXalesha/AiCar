@@ -28,6 +28,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pygame  # noqa: E402
 
 import render  # noqa: E402
+import stats  # noqa: E402
 from main import DONE, Game  # noqa: E402
 
 SEED = 7
@@ -49,6 +50,8 @@ def кадр(game, name):
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
+    # Скрипт доигрывает раунд до конца, а конец раунда пишет статистику игрока.
+    stats.use_sandbox("aicar-previews-")
     game = Game(seed=SEED)
     game.ui.widgets["speed"].index = 2   # без отрисовки каждого кадра - быстрее прокрутка
 
