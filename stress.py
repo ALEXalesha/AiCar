@@ -26,11 +26,7 @@ import trackgen
 
 # Проверка гоняет настоящую игру, а та пишет мозги и статистику. Уводим запись
 # во временную папку: испортить сохранения игрока прогоном проверки недопустимо.
-SANDBOX = os.path.join(tempfile.mkdtemp(prefix="aicar-stress-"), "saves")
-os.makedirs(SANDBOX, exist_ok=True)
-cfg.SAVE_DIR = SANDBOX
-cfg.BRAIN_FILE = os.path.join(SANDBOX, "brains.npz")
-cfg.STATS_FILE = os.path.join(SANDBOX, "stats.json")
+SANDBOX = stats.use_sandbox("aicar-stress-")
 
 FAST, SLOW, HEAVY = "fast", "slow", "heavy"
 CHECKS = []

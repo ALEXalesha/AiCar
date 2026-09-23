@@ -478,6 +478,7 @@ class Game:
 def selftest(report_path, frames=400):
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    stats.use_sandbox("aicar-selftest-")
 
     game = Game(seed=0)
     game.ui.widgets["speed"].index = 2

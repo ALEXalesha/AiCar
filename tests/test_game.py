@@ -269,3 +269,21 @@ def test_saving_writes_the_fitness_of_the_trained_generation():
     genomes, fitness = stats.load_brains(path)
     assert np.allclose(genomes, g.brains)
     assert np.allclose(fitness, g.last_fitness)
+
+
+def test_selftest_leaves_the_player_saves_alone(monkeypatch, tmp_path):
+    """--selftest играет настоящий раунд до конца, а конец раунда пишет статистику.
+
+    Без песочницы каждая самопроверка добавляла игроку раунд «доехал за 4 поколения»:
+    в настоящем stats.json такие записи и нашлись, по одной на запуск.
+    """
+    player = tmp_path / "игрок"
+    monkeypatch.setattr(main.cfg, "SAVE_DIR", str(player))
+    monkeypatch.setattr(main.cfg, "STATS_FILE", str(player / "stats.json"))
+    monkeypatch.setattr(main.cfg, "BRAIN_FILE", str(player / "brains.npz"))
+
+    lines = main.selftest(str(tmp_path / "отчёт.txt"))
+
+    assert lines[-1] == "OK"
+    assert any("состояние done" in line for line in lines), "раунд не доигран - проверка ничего не доказала"
+    assert not player.exists(), sorted(p.name for p in player.iterdir())
