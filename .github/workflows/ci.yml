@@ -32,7 +32,7 @@ jobs:
       - name: Зависимости
         run: pip install -r requirements-dev.txt
 
-      - name: 277 тестов
+      - name: 278 тестов
         run: python -m pytest -q
 
       # Один круг вместо десяти: десять это десять минут, а нарушение инварианта

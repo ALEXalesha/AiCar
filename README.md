@@ -74,7 +74,7 @@ Ready Windows builds - installer and portable - are on the [releases page](https
 python -m pytest
 ```
 
-277 tests, about two minutes - everything that can be checked without a window: track geometry, the distance field, sensors, physics, checkpoints, fitness, the genetic algorithm, widget logic, sound synthesis, saves.
+278 tests, about two minutes - everything that can be checked without a window: track geometry, the distance field, sensors, physics, checkpoints, fitness, the genetic algorithm, widget logic, sound synthesis, saves.
 
 Beside them is a sweep of invariants over random data:
 
