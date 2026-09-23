@@ -10,7 +10,7 @@
 
 **Спецификация:** [docs/superpowers/specs/2026-09-04-ai-car-racing-design.md](../specs/2026-09-04-ai-car-racing-design.md)
 
-**Репозиторий:** `origin` = `http://gitea.local/ALEXaloysha/AiCar.git`, автор `ALEXaloysha <203467574+ALEXalesha@users.noreply.github.com>`.
+**Репозиторий:** `origin` - Gitea в домашней сети; автор коммитов берётся из настроек репозитория.
 
 ---
 
