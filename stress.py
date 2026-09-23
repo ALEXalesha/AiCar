@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 import tempfile
 import time
 import traceback
@@ -1424,6 +1425,10 @@ def main():
     ap.add_argument("--heavy", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+    # Вывод по-русски, а в трубе Windows берёт кодовую страницу системы. На английской
+    # это cp1252, и первая же строка падает с UnicodeEncodeError - так и вышло на
+    # сервере сборки, ещё до первой проверки.
+    sys.stdout.reconfigure(encoding="utf-8")
 
     counts = {FAST: args.fast, SLOW: args.slow, HEAVY: args.heavy}
     tally = {tier: sum(1 for _, _, cost in CHECKS if cost == tier) for tier in counts}
