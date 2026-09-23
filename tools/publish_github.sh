@@ -18,8 +18,10 @@ REPO=ALEXalesha/AiCar
 PRIVATE_EMAIL="$(git config user.email)"
 PUBLIC_EMAIL=203467574+ALEXalesha@users.noreply.github.com
 # Второе, чего не должно быть в открытом репозитории: адрес домашнего Gitea. Он лежит
-# в плане и спецификации из docs/superpowers, в строчке про remote origin.
-LAN_GITEA='gitea.local'
+# в плане и спецификации из docs/superpowers, в строчке про remote origin. И он тоже
+# берётся из настроек, а не пишется строкой: в первой версии скрипт нашёл адрес в
+# самом себе и переписал собственную замену в бессмысленную gitea.local -> gitea.local.
+LAN_GITEA="$(git remote get-url origin | sed -E 's#^[a-z]+://([^/]+)/.*#\1#')"
 PUBLIC_GITEA='gitea.local'
 TAG="${1:-}"
 
