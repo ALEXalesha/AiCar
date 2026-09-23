@@ -1406,6 +1406,7 @@ def run_round(seed, counts, verbose=False):
     done = 0
     for name, fn, cost in CHECKS:
         cases = counts[cost]
+        t0 = time.perf_counter()
         for case in range(cases):
             try:
                 fn(rng)
@@ -1413,7 +1414,9 @@ def run_round(seed, counts, verbose=False):
                 failures.append((name, case, traceback.format_exc(limit=4)))
             done += 1
         if verbose:
-            print(f"    {name}: {cases}")
+            # flush: без него вывод в трубу копится до конца круга, и по логу
+            # сервера сборки не понять, на каком свойстве прогон встал.
+            print(f"    {time.perf_counter() - t0:6.1f} с  {name}: {cases}", flush=True)
     return done, failures
 
 
@@ -1424,6 +1427,7 @@ def main():
     ap.add_argument("--slow", type=int, default=4)
     ap.add_argument("--heavy", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("-v", "--verbose", action="store_true", help="печатать каждое свойство и его время")
     args = ap.parse_args()
     # Вывод по-русски, а в трубе Windows берёт кодовую страницу системы. На английской
     # это cp1252, и первая же строка падает с UnicodeEncodeError - так и вышло на
@@ -1442,7 +1446,7 @@ def main():
     total, broken = 0, []
     for r in range(args.rounds):
         t0 = time.perf_counter()
-        done, failures = run_round(args.seed + r * 1000, counts)
+        done, failures = run_round(args.seed + r * 1000, counts, args.verbose)
         total += done
         broken += failures
         mark = "ОШИБКИ" if failures else "чисто"
