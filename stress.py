@@ -8,6 +8,11 @@ import traceback
 import numpy as np
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+# Звук тоже заглушкой и тоже сразу. Раньше он ставился лениво, в `the_game`, а
+# свойства панели ещё до того зовут `pygame.init()` - он поднимает все
+# подсистемы, звук в том числе. На сервере сборки звуковой карты нет, и круг
+# вставал там на двенадцать минут, пока его не снимал предел шага.
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
