@@ -74,7 +74,9 @@ def make_portable(folder=None):
     with open(os.path.join(folder, "portable.txt"), "w", encoding="utf-8") as f:
         f.write("Пока этот файл лежит рядом с AiCar.exe, сохранения пишутся в папку saves рядом,\n"
                 "а не в профиль пользователя. Удалите его, чтобы вернуть обычное поведение.\n")
-    shutil.copy("README.md", os.path.join(folder, "README.md"))
+    # Интерфейс по-русски, и подробный рассказ тоже в README.ru.md; README.md - английская выжимка.
+    for doc in ("README.md", "README.ru.md"):
+        shutil.copy(doc, os.path.join(folder, doc))
 
     archive = os.path.join(DIST, f"{APP}-portable.zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
