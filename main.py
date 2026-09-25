@@ -19,6 +19,7 @@ import track
 import trackgen
 import train
 import ui
+import window_memory
 
 TRAINING = "training"
 SHOWCASE = "showcase"
@@ -55,6 +56,8 @@ MESSAGE_FRAMES = 150
 
 class Game:
     def __init__(self, seed=None):
+        # Окно открывается там, где его закрыли (1.1.0): место отдаётся SDL до создания окна.
+        window_memory.before_window(paths.user_file("window.json"))
         pygame.init()
         pygame.display.set_caption("AI Car Racing")
         self.screen = pygame.display.set_mode((cfg.WINDOW_W, cfg.WINDOW_H))
@@ -472,6 +475,7 @@ class Game:
             pygame.display.flip()
             self.clock.tick(cfg.FPS)
         self.audio.stop()
+        window_memory.remember(paths.user_file("window.json"))
         pygame.quit()
 
 

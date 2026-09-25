@@ -1,12 +1,12 @@
 Unicode true
 
 !define APP "AiCar"
-!define VERSION "1.0.0"
+!define VERSION "1.1.0"
 !define PUBLISHER "ALEXaloysha"
 !define REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP}"
 
 Name "${APP}"
-OutFile "dist\${APP}Setup.exe"
+OutFile "dist\${APP}-${VERSION}-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\${APP}"
 InstallDirRegKey HKCU "Software\${APP}" "InstallDir"
 RequestExecutionLevel user

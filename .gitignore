@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 saves/
+window.json
+window.json.tmp
 .pytest_cache/
 .remember/
 build/
