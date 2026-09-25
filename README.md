@@ -74,7 +74,7 @@ Ready Windows builds - installer and portable - are on the [releases page](https
 python -m pytest
 ```
 
-278 tests, about two minutes - everything that can be checked without a window: track geometry, the distance field, sensors, physics, checkpoints, fitness, the genetic algorithm, widget logic, sound synthesis, saves.
+285 tests, about two minutes - everything that can be checked without a window: track geometry, the distance field, sensors, physics, checkpoints, fitness, the genetic algorithm, widget logic, sound synthesis, saves. One test does open a real window, twice: the game window opens where it was closed (`window.json` in the data folder), and that can only be checked against Windows itself.
 
 Beside them is a sweep of invariants over random data:
 

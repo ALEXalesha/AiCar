@@ -12,6 +12,15 @@ ICON = os.path.join(BUILD, f"{APP}.ico")
 NSIS_SCRIPT = "installer.nsi"
 NSIS_PATHS = (r"C:\Program Files (x86)\NSIS\makensis.exe", r"C:\Program Files\NSIS\makensis.exe")
 
+
+def version():
+    """Номер версии - один, в installer.nsi; по нему названы и установщик, и архив."""
+    with open(NSIS_SCRIPT, encoding="utf-8-sig") as f:
+        for line in f:
+            if line.startswith("!define VERSION"):
+                return line.split('"')[1]
+    raise SystemExit("в installer.nsi нет !define VERSION")
+
 EXCLUDE = ("torch", "torchvision", "scipy", "sklearn", "matplotlib", "PIL",
            "IPython", "notebook", "pandas", "pytest")
 HIDDEN = ("pkg_resources",)
@@ -78,7 +87,7 @@ def make_portable(folder=None):
     for doc in ("README.md", "README.ru.md"):
         shutil.copy(doc, os.path.join(folder, doc))
 
-    archive = os.path.join(DIST, f"{APP}-portable.zip")
+    archive = os.path.join(DIST, f"{APP}-{version()}-portable.zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(folder):
             for name in files:
@@ -100,7 +109,7 @@ def make_installer():
         print("NSIS не найден, установщик пропущен")
         return None
     subprocess.run([nsis, NSIS_SCRIPT], check=True)
-    return os.path.join(DIST, f"{APP}Setup.exe")
+    return os.path.join(DIST, f"{APP}-{version()}-setup.exe")
 
 
 def size_of(path):
