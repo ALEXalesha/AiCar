@@ -122,4 +122,11 @@ def test_a_real_window_opens_where_it_was_closed(tmp_path):
     first = launch("move")
     saved = json.loads(f.read_text(encoding="utf-8"))
     assert (saved["x"], saved["y"]) == first
-    assert launch("stay") == first
+    # На экране меньше окна (раннер GitHub - 1024x768, окно с рамкой 1296x759) правило
+    # придвигает окно к углу экрана; на обычном мониторе это ровно прежнее место.
+    cx, cy = map(int, wm.plan(saved, wm.ws.work_areas(), 1280, 720).split(","))
+    want = (cx - saved["client_dx"], cy - saved["client_dy"])
+    area = wm.ws.work_areas()[0]
+    if saved["width"] <= area["width"] and saved["height"] <= area["height"]:
+        assert want == first
+    assert launch("stay") == want
