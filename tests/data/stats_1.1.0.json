@@ -1,0 +1,11 @@
+{
+  "rounds": 3,
+  "finished": 3,
+  "generations": 31,
+  "best_time": 7.733333333333333,
+  "gens_to_finish": [
+    6,
+    5,
+    20
+  ]
+}

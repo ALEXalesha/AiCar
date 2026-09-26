@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QPushBu
 import main
 import theme
 from chart import Chart
+from chart import fmt as chart_fmt
 
 # Замер автора (README): уровень «сложный», двенадцать случайных сидов - доехали десять,
 # медиана 16.5 поколения до финиша.
@@ -22,6 +23,12 @@ BENCH_LEVEL = "сложный"
 BENCH_FINISH_SHARE = 10 / 12
 BENCH_MEDIAN_GENS = 16.5
 GENERATORS = (("cppn", main.GEN_CPPN), ("model", main.GEN_MODEL))
+
+TRAINING_TITLE = "Обучение водителей по поколениям"
+TRAINING_H = 290
+TRAINING_EMPTY = ("Кривая обучения появится, когда закончится первый раунд: лучший и средний "
+                  "результат каждого поколения. В stats.json до версии 2.0.0 её нет - "
+                  "она записывается с 2.0.0.")
 
 
 def label(text="", name=None, wrap=False):
@@ -189,6 +196,23 @@ class StatsScreen(QWidget):
             cards.addWidget(c, 1)
         box.addLayout(cards)
 
+        # Главный график - сразу под карточками и на всю ширину: как учились водители,
+        # поколение за поколением (лучший и средний результат).
+        self.chart_training = Chart(TRAINING_TITLE, theme.GOLD, "поколение", names=("лучший", "средний"),
+                                    empty_text=TRAINING_EMPTY, height=TRAINING_H,
+                                    y_label="оценка: чекпоинты × 100 + бонус за финиш")
+        box.addWidget(self.chart_training)
+        rounds_row = QHBoxLayout()
+        rounds_row.setSpacing(12)
+        self.chart_gens = Chart("Поколений до финиша", theme.ACCENT, "раунд с финишем", y_label="поколений")
+        self.chart_time = Chart("Время финиша", theme.GOOD, "раунд", unit=" с", y_label="секунд")
+        self.chart_progress = Chart("Дальше всех: доля трассы", "#de8c5a", "раунд", percent=True,
+                                    y_label="трассы у лучшего")
+        for c in (self.chart_gens, self.chart_time, self.chart_progress):
+            rounds_row.addWidget(c, 1)
+        box.addLayout(rounds_row)
+        self.charts = [self.chart_training, self.chart_gens, self.chart_time, self.chart_progress]
+
         self.level_cells = {}
         levels = card()
         grid = QGridLayout(levels)
@@ -245,24 +269,13 @@ class StatsScreen(QWidget):
         gv.addWidget(self.cars_label)
         box.addWidget(garage)
 
-        charts = QGridLayout()
-        charts.setSpacing(12)
-        self.chart_training = Chart("Последний раунд: лучший и средний", theme.GOLD, "поколение")
-        self.chart_gens = Chart("Поколений до финиша", theme.ACCENT, "раунд с финишем")
-        self.chart_time = Chart("Время финиша", theme.GOOD, "раунд", unit=" с")
-        self.chart_progress = Chart("Дальше всех проехал: доля трассы", "#de8c5a", "раунд", percent=True)
-        self.charts = [self.chart_training, self.chart_gens, self.chart_time, self.chart_progress]
-        for i, c in enumerate(self.charts):
-            charts.addWidget(c, i // 2, i % 2)
-        box.addLayout(charts)
-        self.no_charts = label("Графиков пока нет: они появятся, когда наберётся хотя бы "
-                               "два поколения или два раунда.", "muted", wrap=True)
-        box.addWidget(self.no_charts)
         box.addStretch(1)
 
     # --- данные ---------------------------------------------------------------------------
 
-    def refresh(self, totals, history=None):
+    def refresh(self, totals, history=None, round_no=None, live=False):
+        """totals - итоги (stats.load_totals); history - поколения идущего раунда из игры,
+        round_no и live - его номер и идёт ли обучение: тогда главный график - про него."""
         rounds, finished = totals.get("rounds", 0), totals.get("finished", 0)
         self.values["rounds"].setText(str(rounds))
         self.values["finished"].setText(str(finished))
@@ -301,11 +314,20 @@ class StatsScreen(QWidget):
         self.cars_label.setText(self._cars(cars(totals)))
 
         points = curves(totals, history)
+        self.chart_training.title = self._training_title(totals, history, round_no, live)
         self.chart_training.set_points(points["training"], points["training_mean"])
         self.chart_gens.set_points(points["gens"])
         self.chart_time.set_points(points["time"])
         self.chart_progress.set_points(points["progress"])
-        self.no_charts.setVisible(self.visible_charts() == 0)
+
+    @staticmethod
+    def _training_title(totals, history, round_no, live):
+        """Какой раунд на графике: идущий (из игры) или последний записанный (из файла)."""
+        if history and len(history) >= 2 and round_no:
+            return f"{TRAINING_TITLE}: раунд {round_no}" + (", идёт" if live else "")
+        log = entries(totals)
+        n = log[-1].get("n") if log else None
+        return f"{TRAINING_TITLE}: раунд {n}" if _num(n) else TRAINING_TITLE
 
     @staticmethod
     def _bench(info):

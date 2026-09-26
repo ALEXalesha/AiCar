@@ -53,7 +53,9 @@ def cards(s):
 def test_an_empty_file_shows_zeros_and_no_charts(screen, tmp_path):
     screen.refresh(stats.load_totals(str(tmp_path / "нет.json")))
     assert cards(screen) == {"rounds": "0", "finished": "0", "generations": "0", "best_time": "-"}
-    assert screen.visible_charts() == 0 and screen.no_charts.isVisible()
+    # главный график не пропадает, а говорит, откуда возьмётся; остальные без данных скрыты
+    assert screen.visible_charts() == 1 and screen.chart_training.isVisible()
+    assert not screen.chart_training.has_data() and "первый раунд" in screen.chart_training.empty_text
     assert "ещё нет" in screen.bench_label.text()
     assert not screen.levels_note.isVisible()
     assert not screen.grab().isNull()
@@ -64,8 +66,10 @@ def test_a_1_1_file_shows_its_numbers_and_what_it_cannot(screen, tmp_path):
     assert cards(screen) == {"rounds": "12", "finished": "9", "generations": "170", "best_time": "8.4 с"}
     assert screen.notes["finished"].text() == "75% раундов"
     assert screen.notes["generations"].text() == f"до финиша в среднем {sum(OLD['gens_to_finish']) / 9:.1f}"
-    # поколений до финиша - единственный график, данные для которого были и в 1.1.0
-    assert not screen.chart_gens.isHidden() and screen.visible_charts() == 1
+    # поколений до финиша - единственный график, данные для которого были и в 1.1.0;
+    # главный виден с подписью: кривой обучения в файле 1.1.0 нет
+    assert not screen.chart_gens.isHidden() and screen.visible_charts() == 2
+    assert not screen.chart_training.has_data()
     assert screen.chart_gens.points[-1] == (9.0, 18.0)
     assert screen.levels_note.isVisible() and "(12)" in screen.levels_note.text()
     assert screen.level_cells["сложный", "rounds"].text() == "0"
@@ -134,6 +138,90 @@ def test_junk_in_the_log_is_skipped_not_shown(screen):
     assert screen.level_cells["сложный", "rounds"].text() == "1"
     assert screen.level_cells["свой", "rounds"].text() == "2"
     assert not screen.grab().isNull()
+
+
+# --- главный график: обучение водителей по поколениям ---------------------------------------
+
+@pytest.fixture(scope="module")
+def real_stats_file(tmp_path_factory):
+    """stats.json, записанный настоящей игрой: два раунда до конца на быстрой скорости."""
+    import config as cfg
+    import main
+    from qt_app import qapp
+    qapp()
+    folder = tmp_path_factory.mktemp("real")
+    saved = cfg.STATS_FILE
+    cfg.STATS_FILE = str(folder / "stats.json")
+    try:
+        g = main.Game(seed=3)
+        g.ui.widgets["speed"].index = 3
+        g.ui.widgets["generations"].value = 7
+        for _ in range(2):
+            for _ in range(20):
+                g.frame()
+                if g.state != main.TRAINING:
+                    break
+            if g.rounds < 2:
+                g.new_round(new_track=False)
+    finally:
+        cfg.STATS_FILE = saved
+    return folder / "stats.json"
+
+
+def test_the_chart_is_drawn_from_a_real_stats_file(screen, real_stats_file):
+    raw = json.loads(real_stats_file.read_text(encoding="utf-8"))
+    screen.refresh(stats.load_totals(str(real_stats_file)))
+    chart = screen.chart_training
+    best, mean = raw["last_curve"]["best"], raw["last_curve"]["mean"]
+    assert len(best) >= 2 and chart.has_data() and chart.isVisible()
+    assert len(chart.points) == len(best) == raw["log"][-1]["gens"]
+    assert len(chart.second) == len(mean)
+    assert chart.points[-1][1] == best[-1] and chart.second[-1][1] == mean[-1]
+    assert chart.corner()[1][0] == ss.chart_fmt(best[-1])            # последнее - в углу
+    assert chart.title.endswith(f"раунд {raw['log'][-1]['n']}")
+    image = chart.grab().toImage()
+    gold = [(x, y) for x in range(0, image.width(), 3) for y in range(40, image.height() - 46, 3)
+            if image.pixelColor(x, y).name() == theme.GOLD]
+    assert gold, "линии лучшего результата на графике нет"
+
+
+def test_an_empty_file_draws_a_caption_instead_of_an_empty_chart(screen, tmp_path):
+    screen.refresh(stats.load_totals(str(tmp_path / "нет.json")))
+    chart = screen.chart_training
+    assert chart.isVisible() and not chart.has_data() and chart.points == []
+    with_caption = chart.grab().toImage()
+    text, chart.empty_text = chart.empty_text, ""
+    without = chart.grab().toImage()
+    chart.empty_text = text
+    assert with_caption != without, "подписи вместо графика не видно"
+
+
+def test_the_live_round_is_shown_while_training(screen, real_stats_file):
+    class S:
+        def __init__(self, best, mean):
+            self.best, self.mean = best, mean
+    screen.refresh(stats.load_totals(str(real_stats_file)), [S(10, 1), S(20, 2), S(35, 4)], 9, live=True)
+    assert screen.chart_training.title.endswith("раунд 9, идёт")
+    assert screen.chart_training.points[-1] == (2.0, 35.0)
+
+
+def test_the_chart_is_readable_in_the_smallest_window(qapp, real_stats_file):
+    import main
+    import window
+    w = window.MainWindow(main.Game(seed=0, start=False))
+    w.show()
+    w.resize(w.minimumSize())
+    w.stats_screen.refresh(stats.load_totals(str(real_stats_file)))
+    w.stack.setCurrentWidget(w.stats_screen)
+    qapp.processEvents()
+    chart = w.stats_screen.chart_training
+    title_font, small = chart.fonts()
+    from PySide6.QtGui import QFontMetrics
+    corner = sum(QFontMetrics(title_font).horizontalAdvance(t) for t, _ in chart.corner())
+    title = QFontMetrics(title_font).horizontalAdvance(chart.title)
+    w.close()
+    assert chart.width() >= 600, chart.width()
+    assert title + corner + 40 <= chart.width(), "заголовок и последние значения не влезают рядом"
 
 
 def test_all_texts_on_the_screen_are_russian_and_filled(screen, tmp_path):
