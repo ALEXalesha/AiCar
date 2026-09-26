@@ -1,15 +1,23 @@
+"""AI Car Racing: игра без окна (`Game`) и запуск (`main`).
+
+`Game` - вся игра: раунды, поколения, слежение, панель, звук, и рисование в QPainter. Окна
+у неё нет: окно (`window.MainWindow`) крутит её таймером, отдаёт ей мышь и клавиши и зовёт
+`paint`. Так тесты, stress.py, самопроверка и кадры для README рисуют ту же игру в картинку.
+"""
 import argparse
 import os
 import sys
+import time
 
 import numpy as np
-import pygame
+from PySide6.QtCore import Qt
 
 import brain
 import car
 import config as cfg
 import evolution
 import field
+import offscreen
 import race
 import render
 import sound
@@ -19,7 +27,7 @@ import track
 import trackgen
 import train
 import ui
-import window_memory
+from rect import Rect
 
 TRAINING = "training"
 SHOWCASE = "showcase"
@@ -39,39 +47,53 @@ LEVELS = (
     ("адский", 30, 1.0),
 )
 LEVEL_NAMES = tuple(name for name, _, _ in LEVELS)
+LEVEL_CUSTOM = "свой"
 DEFAULT_LEVEL = 2
 PICK_RADIUS = 40.0
 GEN_CPPN, GEN_MODEL = "CPPN + эволюция", "обученная модель"
 
-STATS_H = 172
+# Окно (2.0.0): 1280x720 по умолчанию, как было у pygame, но теперь его можно тянуть и
+# разворачивать. Минимум - чтобы влезало в экран 1024x768 с панелью задач и заголовком.
+MIN_W, MIN_H = 960, 640
+
+STATS_H, STATS_LEAST = 172, 160
 BADGE_INSET, BADGE_SCALE = 52, 1.8
 
 
 def badge_reach(veh):
     """Половина ширины значка в пикселях: сколько места он отнимает у строк."""
     return float(np.abs(veh.stacked[:, 0]).max()) * BADGE_SCALE
-GRAPH_H = 54
+
+
+GRAPH_H, GRAPH_LEAST = 54, 44
 MESSAGE_FRAMES = 150
+
+# Клавиши - коды Qt.Key. Буквы и цифры совпадают с кодами клавиш Windows (VK_R = Key_R),
+# поэтому окно подставляет код физической клавиши: на русской раскладке R - это «К».
+KEY_QUIT = int(Qt.Key.Key_Escape)
+KEY_PAUSE = int(Qt.Key.Key_Space)
+KEY_ROUND, KEY_TRACK, KEY_CAR = int(Qt.Key.Key_R), int(Qt.Key.Key_T), int(Qt.Key.Key_M)
+KEY_SHOW, KEY_LEADER, KEY_NOBODY = int(Qt.Key.Key_S), int(Qt.Key.Key_L), int(Qt.Key.Key_N)
+KEY_SPEED_1, KEY_SPEED_4 = int(Qt.Key.Key_1), int(Qt.Key.Key_4)
 
 
 class Game:
-    def __init__(self, seed=None):
-        # Окно открывается там, где его закрыли (1.1.0): место отдаётся SDL до создания окна.
-        window_memory.before_window(paths.user_file("window.json"))
-        pygame.init()
-        pygame.display.set_caption("AI Car Racing")
-        self.screen = pygame.display.set_mode((cfg.WINDOW_W, cfg.WINDOW_H))
-        self.clock = pygame.time.Clock()
-        self.view = pygame.Rect(0, 0, cfg.WINDOW_W - cfg.PANEL_W, cfg.WINDOW_H)
-        self.panel_rect = pygame.Rect(self.view.width, 0, cfg.PANEL_W, cfg.WINDOW_H)
-        self.font = pygame.font.SysFont("consolas", 15)
-        self.big = pygame.font.SysFont("consolas", 21, bold=True)
+    def __init__(self, seed=None, audio=None, size=(cfg.WINDOW_W, cfg.WINDOW_H), start=True):
+        offscreen.app()                  # шрифтам и картинкам Qt нужно приложение
+        self.width, self.height = int(size[0]), int(size[1])
+        self.view = Rect(0, 0, self.width - cfg.PANEL_W, self.height)
+        self.panel_rect = Rect(self.view.width, 0, cfg.PANEL_W, self.height)
+        self.font = render.font(15)
+        self.big = render.font(21, bold=True)
+        self.track_layer = render.TrackLayer()
 
         self.rng = np.random.default_rng(seed)
         self.generator = trackgen.Generator() if trackgen.available() else None
         self.build_panel()
         self.level_shown = DEFAULT_LEVEL
-        self.audio = sound.SoundBank(self.ui.value("volume"))
+        # Звук по умолчанию выключен: тесты и stress.py не должны гудеть. Окно игры
+        # передаёт настоящий (main).
+        self.audio = audio if audio is not None else sound.SoundBank(enabled=False)
         self.totals = stats.load_totals()
         self.message = ""
         self.message_left = 0
@@ -80,15 +102,26 @@ class Game:
         self.watched = WATCH_LEADER
         self.hud = render.hud_rect(self.view)
         self.hud_grab = None
+        self.hud_moved = False
         self.last_fitness = None
         self.rounds = 0
         self.running = True
-        self.new_round(new_car=True)
+        self.mouse = None                # где мышь - для подсветки кнопок
+        self.splash_text = ""
+        self.on_splash = None            # окно: показать заставку, пока строится трасса
+        self.want_stats = False          # нажата кнопка «статистика»: окно откроет экран
+        self.race = None
+        if start:
+            self.new_round(new_car=True)
+
+    @property
+    def started(self):
+        return self.race is not None
 
     def build_panel(self):
         p = ui.Panel(self.panel_rect, self.font)
-        p.skip(STATS_H)
-        p.graph("graph", GRAPH_H)
+        p.skip(STATS_H, STATS_LEAST)
+        p.graph("graph", GRAPH_H, GRAPH_LEAST)
         p.slider("pop_size", "популяция", 10, 120, cfg.POP_SIZE, integer=True)
         p.slider("generations", "поколений", 5, 120, cfg.MAX_GENERATIONS, integer=True)
         p.slider("mut_sigma", "мутация", 0.01, 0.6, cfg.MUT_SIGMA)
@@ -99,13 +132,32 @@ class Game:
         p.toggle("level", "уровень", LEVEL_NAMES, DEFAULT_LEVEL)
         names = (GEN_CPPN, GEN_MODEL) if self.generator else (GEN_CPPN,)
         p.toggle("generator", "генератор", names)
-        p.toggle("speed", "скорость показа", SPEED_NAMES)
+        # «скорость», а не «скорость показа», как было до 2.0.0: с «без отрисовки» справа
+        # длинная подпись не влезала в 272 пикселя шрифтом на 10% крупнее (тест test_ui).
+        p.toggle("speed", "скорость", SPEED_NAMES)
         p.toggle("brain", "мозг", BRAIN_NAMES)
         p.toggle("replay", "повтор заезда", REPLAY_NAMES)
         p.buttons([("track", "новая трасса"), ("car", "новая машина")])
         p.buttons([("show", "заезд"), ("pause", "пауза")])
         p.buttons([("save", "сохранить"), ("load", "загрузить")])
+        p.buttons([("stats", "статистика")], per_row=1)
         self.ui = p
+
+    def resize(self, width, height):
+        """Окно сменило размер: поле - всё, кроме панели; панель раскладывается заново."""
+        self.width, self.height = max(1, int(width)), max(1, int(height))
+        self.view = Rect(0, 0, max(1, self.width - cfg.PANEL_W), self.height)
+        self.panel_rect = Rect(self.view.width, 0, cfg.PANEL_W, self.height)
+        self.ui.layout(self.panel_rect)
+        if self.started:
+            self.camera.rect = self.view
+            self.camera.fit(self.track.lo, self.track.hi)
+        # Окошко телеметрии, которое не двигали, остаётся в левом нижнем углу поля;
+        # сдвинутое мышью - там, куда его поставили, только внутри поля.
+        if self.hud_moved:
+            self.hud.clamp_ip(self.view)
+        else:
+            self.hud = render.hud_rect(self.view)
 
     @property
     def speed(self):
@@ -116,15 +168,16 @@ class Game:
         return self.ui.widgets["brain"].index == 1
 
     def splash(self, text):
-        self.screen.fill(render.BG)
-        label = self.big.render(text, True, render.TEXT)
-        self.screen.blit(label, label.get_rect(center=self.view.center))
-        pygame.display.flip()
+        self.splash_text = text
+        if self.on_splash is not None:
+            self.on_splash()
 
     def make_track(self):
         width, difficulty = self.ui.value("width"), self.ui.value("difficulty")
         if self.generator is not None and self.ui.value("generator") == GEN_MODEL:
+            self.track_generator = "model"
             return self.generator.make_track(self.rng, width, difficulty)
+        self.track_generator = "cppn"
         return track.evolve_track(self.rng, width, difficulty)
 
     def new_round(self, new_track=True, new_car=True):
@@ -136,9 +189,12 @@ class Game:
         """
         if new_track or not hasattr(self, "track"):
             self.splash("генерация трассы...")
+            started = time.perf_counter()
             self.track = self.make_track()
+            self.track_seconds = time.perf_counter() - started
             self.field = field.build_for_track(self.track)
             self.camera = render.Camera(self.view, self.track.lo, self.track.hi)
+            self.splash_text = ""
         if new_car or not hasattr(self, "car"):
             self.car = car.random_car(self.rng)
 
@@ -167,6 +223,33 @@ class Game:
         return evolution.evolve(seeded, np.arange(n, dtype=float), self.rng,
                                 elite_frac=1.0 / n, mut_sigma=self.ui.value("mut_sigma"))
 
+    def level_name(self):
+        """Уровень по ползункам: ширина и сложность сдвинуты руками - «свой»."""
+        width, difficulty = self.ui.value("width"), self.ui.value("difficulty")
+        for name, w, d in LEVELS:
+            if width == w and abs(difficulty - d) < 1e-9:
+                return name
+        return LEVEL_CUSTOM
+
+    def round_info(self):
+        """Что запомнить о раунде для экрана статистики (stats.record_round)."""
+        last_cp = max(1, self.track.n_checkpoints - 1)
+        best_cp = max((s.best_cp for s in self.history), default=0)
+        return {
+            "level": self.level_name(),
+            "generator": getattr(self, "track_generator", "cppn"),
+            "pop": int(len(self.brains)),
+            "progress": round(min(1.0, best_cp / last_cp), 4),
+            "track": {"length": round(float(self.track.length), 1),
+                      "radius": round(float(self.track.min_radius), 1),
+                      "interest": round(float(self.track.variety), 2),
+                      "width": round(float(self.track.width), 1),
+                      "build_s": round(float(getattr(self, "track_seconds", 0.0)), 3)},
+            "car": {"speed": round(float(self.car.max_speed), 1),
+                    "steer": round(float(self.car.max_steer), 3),
+                    "mass": round(float(self.car.mass), 3)},
+        }
+
     def next_generation(self):
         fit = self.race.fitness()
         self.last_fitness = fit
@@ -174,7 +257,7 @@ class Game:
         self.best_brain = self.brains[int(np.argmax(fit))].copy()
 
         if self.race.n_finished or self.gen + 1 >= self.ui.value("generations"):
-            self.totals = stats.record_round(self.totals, self.history)
+            self.totals = stats.record_round(self.totals, self.history, self.round_info())
             stats.save_totals(self.totals)
             if self.ui.value("replay") == REPLAY_OFF:
                 self.state = DONE
@@ -221,6 +304,13 @@ class Game:
         else:
             self.state = DONE
 
+    def frame(self):
+        """Один кадр игры: кнопки панели, шаги физики, отсчёт сообщения."""
+        self.apply_buttons()
+        self.advance()
+        if self.message_left > 0:
+            self.message_left -= 1
+
     def play_sounds(self, wrecks_before, finished_before):
         self.audio.set_volume(self.ui.value("volume"))
         if self.race.n_finished > finished_before:
@@ -234,24 +324,24 @@ class Game:
             self.audio.stop()
 
     def key(self, code):
-        if code == pygame.K_ESCAPE:
+        if code == KEY_QUIT:
             self.running = False
-        elif code == pygame.K_SPACE:
+        elif code == KEY_PAUSE:
             self.paused = not self.paused
-        elif code == pygame.K_r:
+        elif code == KEY_ROUND:
             self.new_round(new_track=True, new_car=True)
-        elif code == pygame.K_t:
+        elif code == KEY_TRACK:
             self.new_round(new_track=True, new_car=False)
-        elif code == pygame.K_m:
+        elif code == KEY_CAR:
             self.new_round(new_track=False, new_car=True)
-        elif code == pygame.K_s and self.best_brain is not None:
+        elif code == KEY_SHOW and self.best_brain is not None:
             self.start_showcase()
-        elif code == pygame.K_l:
+        elif code == KEY_LEADER:
             self.watched = WATCH_LEADER
-        elif code == pygame.K_n:
+        elif code == KEY_NOBODY:
             self.watched = WATCH_NONE
-        elif pygame.K_1 <= code <= pygame.K_4:
-            self.ui.widgets["speed"].index = code - pygame.K_1
+        elif KEY_SPEED_1 <= code <= KEY_SPEED_4:
+            self.ui.widgets["speed"].index = code - KEY_SPEED_1
 
     def click_field(self, pos):
         if not self.view.collidepoint(pos):
@@ -280,6 +370,25 @@ class Game:
             return
         self.hud.topleft = (pos[0] - self.hud_grab[0], pos[1] - self.hud_grab[1])
         self.hud.clamp_ip(self.view)
+        self.hud_moved = True
+
+    # --- мышь от окна (раньше - разбор событий pygame в run) -----------------------------
+
+    def mouse_down(self, pos, button=1):
+        if button == 1 and self.started:
+            self.click_field(pos)
+        self.ui.handle(ui.press(pos, button))
+
+    def mouse_move(self, pos):
+        self.mouse = pos
+        if self.hud_grab is not None:
+            self.drag_hud(pos)
+        else:
+            self.ui.handle(ui.move(pos))
+
+    def mouse_up(self, pos, button=1):
+        self.hud_grab = None
+        self.ui.handle(ui.release(pos, button))
 
     def apply_level(self):
         index = self.ui.widgets["level"].index
@@ -305,6 +414,8 @@ class Game:
             self.save_brains()
         if self.ui.clicked("load"):
             self.load_brains()
+        if self.ui.clicked("stats"):
+            self.want_stats = True
 
     def save_brains(self):
         fitness = self.last_fitness
@@ -354,27 +465,31 @@ class Game:
             "cp": f"{int(self.race.cp[index])}/{self.track.n_checkpoints - 1}",
         }
 
-    def draw_field(self):
-        self.camera.fit(self.track.lo, self.track.hi)
-        self.screen.set_clip(self.view)
+    # --- рисование ----------------------------------------------------------------------
 
-        render.draw_track(self.screen, self.camera, self.track)
-        render.draw_checkpoints(self.screen, self.camera, self.track, int(self.race.cp.max()))
+    def draw_field(self, p):
+        self.camera.fit(self.track.lo, self.track.hi)
+        # Поле обрезает себя по своему прямоугольнику само, а не потому, что панель
+        # потом закрасит свой (docs/bug-hunt.md: машинка у края красила панель).
+        p.save()
+        p.setClipRect(self.view.qrectf())
+
+        self.track_layer.draw(p, self.camera, self.track)
+        render.draw_checkpoints(p, self.camera, self.track, int(self.race.cp.max()))
         if self.state in (SHOWCASE, DONE):
-            render.draw_path(self.screen, self.camera, self.path, render._lighter(self.car.color))
+            render.draw_path(p, self.camera, self.path, render._lighter(self.car.color))
 
         watch = self.telemetry()
-        render.draw_cars(self.screen, self.camera, self.race, self.car,
-                         watch["index"] if watch else None)
+        render.draw_cars(p, self.camera, self.race, self.car, watch["index"] if watch else None)
         if watch:
-            render.draw_rays(self.screen, self.camera, self.race.pos[watch["index"]],
+            render.draw_rays(p, self.camera, self.race.pos[watch["index"]],
                              self.race.angle[watch["index"]], watch["rays"] * cfg.RAY_MAX)
-            render.draw_telemetry(self.screen, self.hud, self.font, self.car, watch)
-        self.screen.set_clip(None)
+            render.draw_telemetry(p, self.hud, self.font, self.car, watch)
+        p.restore()
 
-    def draw_stats(self):
+    def draw_stats(self, p):
         x = self.panel_rect.left + self.ui.pad
-        y = self.panel_rect.top + self.ui.pad
+        y = self.panel_rect.top + self.ui.top_pad
 
         width = self.panel_rect.width - 2 * self.ui.pad
         badge_column = self.panel_rect.width - BADGE_INSET - badge_reach(self.car) - self.ui.pad - 8
@@ -382,7 +497,7 @@ class Game:
         def line(text, colour=render.TEXT, step=18, room=None):
             nonlocal y
             shown = render.fit_text(self.font, text, width if room is None else room)
-            self.screen.blit(self.font.render(shown, True, colour), (x, y))
+            render.text(p, self.font, shown, colour, x, y)
             y += step
 
         def split_line(left, right, colour, step=18):
@@ -392,19 +507,18 @@ class Game:
             числа съедают запас между половинами, а не вылезают за край.
             """
             nonlocal y
-            room = width - self.font.size(left)[0] - 8
-            if self.font.size(right)[0] > room:
+            room = width - render.text_width(self.font, left) - 8
+            if render.text_width(self.font, right) > room:
                 left, right = stats.summary_parts(self.totals, short=True)
-                room = width - self.font.size(left)[0] - 8
+                room = width - render.text_width(self.font, left) - 8
             right = render.fit_text(self.font, right, room)
-            self.screen.blit(self.font.render(left, True, colour), (x, y))
-            self.screen.blit(self.font.render(right, True, colour),
-                             (x + width - self.font.size(right)[0], y))
+            render.text(p, self.font, left, colour, x, y)
+            render.text(p, self.font, right, colour, x + width - render.text_width(self.font, right), y)
             y += step
 
         title = "ПАУЗА" if self.paused else STATE_NAME[self.state]
         colour = render.LEADER_RING if self.paused else render.TEXT
-        self.screen.blit(self.big.render(title, True, colour), (x, y))
+        render.text(p, self.big, title, colour, x, y)
         y += 30
 
         last = self.history[-1] if self.history else None
@@ -413,22 +527,20 @@ class Game:
              f"{int(self.race.cp.max())}/{self.track.n_checkpoints - 1}")
         if last:
             line(f"лучший {last.best:.0f}   средний {last.mean:.0f}")
-            time = f"   время {last.best_time:.1f} с" if last.best_time else ""
-            line(f"доехало {last.finished}{time}",
+            time_part = f"   время {last.best_time:.1f} с" if last.best_time else ""
+            line(f"доехало {last.finished}{time_part}",
                  render.LEADER_RING if last.finished else render.TEXT)
         else:
             line("лучший -   средний -")
             line("доехало -")
 
-        if self.message_left > 0:
-            self.message_left -= 1
-            line(self.message, render.LEADER_RING)
+        # Сообщения (say) с 2.0.0 всплывают над полем целиком (window.GameView), а не
+        # подменяют эту строку: здесь длинное обрезалось многоточием.
+        left, right = stats.summary_parts(self.totals)
+        if right:
+            split_line(left, right, render.TEXT_DIM)
         else:
-            left, right = stats.summary_parts(self.totals)
-            if right:
-                split_line(left, right, render.TEXT_DIM)
-            else:
-                line(left, render.TEXT_DIM)
+            line(left, render.TEXT_DIM)
 
         # Последние две строки делят место со значком машинки, поэтому им
         # отведена своя, укороченная ширина: значок стоит справа и наезжал бы
@@ -441,69 +553,90 @@ class Game:
         # Значок стоит по центру этих двух строк: они занимают 34 пикселя, и
         # масштаб 1.8 подобран так, чтобы значок в эту полосу помещался. При
         # 2.4 он был 47 пикселей высотой и задевал строку итогов сверху.
-        render.draw_car_badge(self.screen, self.car, (self.panel_rect.right - BADGE_INSET, y - 17),
-                              BADGE_SCALE)
+        render.draw_car_badge(p, self.car, (self.panel_rect.right - BADGE_INSET, y - 17), BADGE_SCALE)
 
-    def draw_panel(self):
-        pygame.draw.rect(self.screen, render.PANEL_BG, self.panel_rect)
-        self.draw_stats()
-        self.ui.widgets["graph"].draw(self.screen, self.history)
-        self.ui.draw(self.screen)
+    def draw_panel(self, p):
+        p.fillRect(self.panel_rect.qrectf(), render.qc(render.PANEL_BG))
+        self.draw_stats(p)
+        self.ui.widgets["graph"].draw(p, self.history)
+        self.ui.draw(p, self.mouse)
 
-    def run(self):
-        while self.running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.running = False
-                elif event.type == pygame.KEYDOWN:
-                    self.key(event.key)
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    self.click_field(event.pos)
-                    self.ui.handle(event)
-                elif event.type == pygame.MOUSEMOTION and self.hud_grab is not None:
-                    self.drag_hud(event.pos)
-                else:
-                    if event.type == pygame.MOUSEBUTTONUP:
-                        self.hud_grab = None
-                    self.ui.handle(event)
-            self.apply_buttons()
+    def draw_splash(self, p):
+        p.fillRect(Rect(0, 0, self.width, self.height).qrectf(), render.qc(render.BG))
+        text = self.splash_text or "генерация трассы..."
+        w = render.text_width(self.big, text)
+        h = render.line_height(self.big)
+        render.text(p, self.big, text, render.TEXT, self.view.centerx - w / 2, self.view.centery - h / 2)
 
-            self.advance()
-            self.screen.fill(render.BG)
-            self.draw_field()
-            self.draw_panel()
-            pygame.display.flip()
-            self.clock.tick(cfg.FPS)
-        self.audio.stop()
-        window_memory.remember(paths.user_file("window.json"))
-        pygame.quit()
+    def paint(self, p):
+        """Весь кадр: поле и панель (или заставка, пока строится трасса)."""
+        if self.splash_text or not self.started:
+            self.draw_splash(p)
+            return
+        p.fillRect(Rect(0, 0, self.width, self.height).qrectf(), render.qc(render.BG))
+        self.draw_field(p)
+        self.draw_panel(p)
+
+    def snapshot(self, *draws):
+        """Картинка окна: фон и то, что нарисуют draws (по умолчанию - весь кадр)."""
+        img = render.canvas(self.width, self.height, render.BG)
+        p = render.painter(img)
+        for draw in draws or (self.paint,):
+            draw(p)
+        p.end()
+        return img
 
 
 def selftest(report_path, frames=400):
-    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    """Раунд без окна на экране и отчёт в файл - проверка собранной игры.
+
+    Идёт через настоящее окно (MainWindow), только offscreen: так проверяется, что в
+    сборку попали Qt-виджеты, платформа offscreen, шрифты и звук."""
+    offscreen.setup(force=True)
+    offscreen.app()
     stats.use_sandbox("aicar-selftest-")
 
-    game = Game(seed=0)
+    import window
+    from PySide6.QtGui import QFontInfo
+
+    audio = sound.SoundBank(volume=0.0)           # настоящее устройство, если есть, но молча
+    game = Game(seed=0, audio=audio)
+    win = window.MainWindow(game)
+    win.resize(cfg.WINDOW_W, cfg.WINDOW_H)
     game.ui.widgets["speed"].index = 2
-    for _ in range(frames):
-        game.advance()
-        game.screen.fill(render.BG)
-        game.draw_field()
-        game.draw_panel()
+    paint_ms = []
+    for n in range(frames):
+        game.frame()
+        audio.pump()
+        started = time.perf_counter()
+        img = game.snapshot()
+        paint_ms.append((time.perf_counter() - started) * 1000)
+        if n % 100 == 0:
+            win.view.grab()                       # тот же кадр через paintEvent окна
         if game.state == DONE:
             break
+    win.show_stats()
+    screen = win.stats_screen.grab()
+    win.close()
+    audio.close()
 
+    info = QFontInfo(game.font)
+    from PySide6.QtGui import QGuiApplication
     lines = [
         f"запуск из архива: {paths.frozen()}",
         f"папка данных:     {paths.data_dir()}",
         f"модель трасс:     {'есть' if game.generator else 'нет'} ({cfg.MODEL_FILE})",
-        f"звук:             {'есть' if game.audio.enabled else 'нет, ' + (game.audio.reason or 'нет устройства')}",
-        f"формат звука:     {game.audio.rate} Гц, каналов {game.audio.channels}"
-        f" (драйвер {os.environ.get('SDL_AUDIODRIVER', '-')})",
+        f"звук:             {'есть' if audio.rate else 'нет, ' + (audio.reason or 'нет устройства')}",
+        f"формат звука:     {audio.rate} Гц, каналов {audio.channels} (QtMultimedia, int16)",
+        f"платформа Qt:     {QGuiApplication.platformName()}",
+        f"шрифт:            {info.family()} {info.pixelSize()} px"
+        f"{'' if info.family() == render.FONT_FAMILY else ' - НЕ ' + render.FONT_FAMILY}",
         f"трасса:           длина {game.track.length:.0f}, чекпоинтов {game.track.n_checkpoints}",
         f"обучение:         поколений {len(game.history)}, состояние {game.state}",
         f"лучший результат: {game.history[-1].best:.0f}" if game.history else "лучший результат: -",
+        f"кадр:             {np.mean(paint_ms):.1f} мс в среднем, кадров {len(paint_ms)}, "
+        f"{img.width()}x{img.height()}",
+        f"статистика:       экран {screen.width()}x{screen.height()}, раундов {game.totals['rounds']}",
         "OK",
     ]
     with open(report_path, "w", encoding="utf-8") as f:
@@ -520,9 +653,28 @@ def main(argv=None):
     if args.selftest:
         for line in selftest(args.selftest):
             print(line)
-        return
-    Game(seed=args.seed).run()
+        return 0
+
+    if sys.platform == "win32":
+        try:   # свой значок на панели задач, а не значок python.exe
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AiCar")
+        except (OSError, AttributeError):
+            pass
+    from PySide6.QtWidgets import QApplication
+
+    import theme
+    import window
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName("AiCar")
+    app.setApplicationDisplayName("AI Car Racing")
+    theme.apply(app)
+    game = Game(seed=args.seed, audio=sound.SoundBank(cfg.VOLUME), start=False)
+    win = window.MainWindow(game, window_path=paths.user_file("window.json"))
+    win.show_window()
+    win.begin()
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

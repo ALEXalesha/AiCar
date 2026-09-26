@@ -1,5 +1,11 @@
+"""Звук: синтез на numpy и проигрывание через QtMultimedia (с 2.0.0; до того - pygame.mixer).
+
+Синтез (`engine_sample`, `crash_sample`, `finish_sample`) не изменился. Играет `Mixer` - один
+поток отсчётов на всё, и `SoundBank` дописывает его в QAudioSink каждый тик окна. Без
+звуковой карты, без QtMultimedia или если устройство не открылось - `enabled = False`,
+игра молчит и не падает.
+"""
 import numpy as np
-import pygame
 
 import config as cfg
 
@@ -30,15 +36,6 @@ def fit_channels(sample, channels):
     if channels <= 1:
         return sample
     return np.repeat(sample[:, None], channels, axis=1)
-
-
-def mixer_format():
-    ready = pygame.mixer.get_init()
-    if ready is None:
-        pygame.mixer.init()
-        ready = pygame.mixer.get_init()
-    rate, _, channels = ready
-    return int(rate), int(abs(channels))
 
 
 def engine_sample(freq, rate=None, rng=None):
@@ -164,33 +161,75 @@ class Mixer:
         return _to_int16(mix)
 
 
+AHEAD_MS = 70          # сколько звука держать в устройстве наперёд: тик окна - 16 мс
+BUFFER_MS = 250        # сколько устройство вообще готово принять
+FORMATS = ((None, None), (48000, 2), (44100, 2), (44100, 1), (22050, 1))
+
+
+def open_sink():
+    """Открыть устройство вывода по умолчанию в формате int16. (sink, io, rate, channels)
+    или исключение с понятным текстом. Формат берётся у открытого устройства, а не тот,
+    что просили: в 1.0 pygame отдал стерео на просьбу о моно, и звук молчал (docs/modules/sound.md)."""
+    from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
+
+    device = QMediaDevices.defaultAudioOutput()
+    if device.isNull():
+        raise RuntimeError("нет устройства вывода звука")
+    preferred = device.preferredFormat()
+    for rate, channels in FORMATS:
+        fmt = QAudioFormat()
+        fmt.setSampleRate(rate or preferred.sampleRate() or 44100)
+        fmt.setChannelCount(channels or min(2, max(1, preferred.channelCount())))
+        fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+        if device.isFormatSupported(fmt):
+            break
+    else:
+        raise RuntimeError("устройство не принимает 16-битный звук")
+    sink = QAudioSink(device, fmt)
+    sink.setBufferSize(int(fmt.sampleRate() * fmt.channelCount() * 2 * BUFFER_MS / 1000))
+    io = sink.start()
+    if io is None or sink.error() != QAudio.Error.NoError:
+        sink.stop()
+        raise RuntimeError(f"устройство не открылось ({sink.error().name})")
+    real = sink.format()
+    return sink, io, real.sampleRate(), real.channelCount()
+
+
 class SoundBank:
-    def __init__(self, volume=None):
-        self.volume = cfg.VOLUME if volume is None else volume
+    """Звук игры. Снаружи - как в pygame-версии: update(скорость), play_crash, play_finish,
+    stop, set_volume; плюс pump() - дописать в устройство то, что микшер успел насчитать
+    (окно зовёт его по таймеру, и когда игра стоит, тоже: иначе затухание не доиграет)."""
+
+    def __init__(self, volume=None, enabled=True):
+        self.volume = float(np.clip(cfg.VOLUME if volume is None else volume, 0.0, 1.0))
         self.level = -1
         self.enabled = False
         self.reason = ""
         self.rate, self.channels = 0, 0
+        self.mixer = None
+        self.sink = self.io = None
+        if not enabled:
+            self.reason = "выключен"
+            return
         try:
-            rate, channels = mixer_format()
-            self.rate, self.channels = rate, channels
-            make = pygame.sndarray.make_sound
-            self.engine = [make(fit_channels(s, channels)) for s in engine_bank(rate=rate)]
-            self.crash = make(fit_channels(crash_sample(rate), channels))
-            self.finish = make(fit_channels(finish_sample(rate), channels))
-            self.motor = pygame.mixer.Channel(0)
-            self.effects = pygame.mixer.Channel(1)
-        except (pygame.error, AttributeError, ValueError) as problem:
+            self.sink, self.io, self.rate, self.channels = open_sink()
+            self.mixer = Mixer(self.rate, engine_bank(rate=self.rate), crash_sample(self.rate),
+                               finish_sample(self.rate))
+        except Exception as problem:  # noqa: BLE001 - нет QtMultimedia, устройства, формата
             self.reason = str(problem) or type(problem).__name__
+            self.close()
             return
         self.enabled = True
         self.set_volume(self.volume)
 
+    @property
+    def engine(self):
+        return self.mixer.engine if self.mixer is not None else []
+
     def set_volume(self, volume):
         self.volume = float(np.clip(volume, 0.0, 1.0))
         if self.enabled:
-            self.motor.set_volume(self.volume * 0.5)
-            self.effects.set_volume(self.volume)
+            self.mixer.set_volume(self.volume)
 
     def update(self, speed, max_speed):
         if not self.enabled or self.volume <= 0.0:
@@ -200,17 +239,46 @@ class SoundBank:
         level = int(round(share * (len(self.engine) - 1)))
         if level != self.level:
             self.level = level
-            self.motor.play(self.engine[level], loops=-1, fade_ms=SWITCH_FADE_MS)
+            self.mixer.set_level(level)
 
     def play_crash(self):
         if self.enabled and self.volume > 0.0:
-            self.effects.play(self.crash)
+            self.mixer.play("crash")
 
     def play_finish(self):
         if self.enabled and self.volume > 0.0:
-            self.effects.play(self.finish)
+            self.mixer.play("finish")
 
     def stop(self):
         if self.enabled:
-            self.motor.stop()
+            self.mixer.set_level(-1)
         self.level = -1
+
+    def pump(self):
+        """Дописать звук так, чтобы в устройстве было AHEAD_MS наперёд. Вернуть, сколько
+        отсчётов записано."""
+        if not self.enabled:
+            return 0
+        try:
+            frame = 2 * self.channels
+            queued = (self.sink.bufferSize() - self.sink.bytesFree()) // frame
+            want = int(self.rate * AHEAD_MS / 1000) - queued
+            room = self.sink.bytesFree() // frame
+            n = min(want, room)
+            if n <= 0:
+                return 0
+            self.io.write(fit_channels(self.mixer.render(n), self.channels).tobytes())
+            return n
+        except Exception as problem:  # noqa: BLE001 - устройство пропало посреди игры
+            self.reason = str(problem) or type(problem).__name__
+            self.close()
+            return 0
+
+    def close(self):
+        if self.sink is not None:
+            try:
+                self.sink.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        self.sink = self.io = None
+        self.enabled = False

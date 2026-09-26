@@ -139,17 +139,89 @@ def test_summary_reports_the_record():
     assert "всего 1" in text and "11.2" in text
 
 
-def test_summary_is_trimmed_to_the_panel_width():
-    import os
-    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-    import pygame
-
+def test_summary_is_trimmed_to_the_panel_width(qapp):
+    """Ширина - в пикселях шрифта панели (QFontMetrics), а не в числе знаков."""
     import config as cfg
     import render
 
-    pygame.init()
-    font = pygame.font.SysFont("consolas", 15)
+    font = render.font(15)
     width = cfg.PANEL_W - 28
     for rounds in (1, 999, 123456):
         totals = dict(stats.EMPTY, rounds=rounds, finished=rounds, best_time=98765.4)
-        assert font.size(render.fit_text(font, stats.summary(totals), width))[0] <= width
+        assert render.text_width(font, render.fit_text(font, stats.summary(totals), width)) <= width
+
+
+# --- 2.0.0: подробности о раундах для экрана статистики ----------------------------------
+
+class Gen2(Gen):
+    def __init__(self, finished=0, best_time=0.0, best=100.0, mean=40.0):
+        super().__init__(finished, best_time)
+        self.best, self.mean = best, mean
+
+
+INFO = {"level": "сложный", "generator": "cppn", "pop": 50, "progress": 0.5,
+        "track": {"length": 2000.0, "radius": 30.0, "interest": 55.0, "width": 34.0, "build_s": 1.9},
+        "car": {"speed": 200.0, "steer": 2.9, "mass": 1.7}}
+
+
+def test_without_info_a_round_is_recorded_exactly_as_in_1_1():
+    totals = stats.record_round(stats.load_totals("нет такого файла"), [Gen2(), Gen2(1, 9.5)])
+    assert totals["log"] == [] and totals["last_curve"] == {"best": [], "mean": []}
+    assert (totals["rounds"], totals["finished"], totals["generations"]) == (1, 1, 2)
+
+
+def test_with_info_the_round_goes_to_the_log():
+    history = [Gen2(best=10.0, mean=2.0), Gen2(best=50.0, mean=9.0), Gen2(1, 12.345, 4700.0, 300.0)]
+    totals = stats.record_round(dict(stats.EMPTY), history, INFO)
+    entry = totals["log"][-1]
+    assert entry["n"] == 1 and entry["gens"] == 3 and entry["finished"] is True
+    assert entry["time"] == 12.35 and entry["level"] == "сложный" and entry["track"]["interest"] == 55.0
+    assert totals["last_curve"] == {"best": [10.0, 50.0, 4700.0], "mean": [2.0, 9.0, 300.0]}
+
+
+def test_a_round_without_a_finish_has_no_time():
+    totals = stats.record_round(dict(stats.EMPTY), [Gen2(0, 0.0)], INFO)
+    assert totals["log"][-1]["finished"] is False and totals["log"][-1]["time"] is None
+
+
+def test_the_log_keeps_only_the_last_rounds():
+    totals = dict(stats.EMPTY)
+    for _ in range(stats.LOG_LIMIT + 7):
+        totals = stats.record_round(totals, [Gen2()], INFO)
+    assert len(totals["log"]) == stats.LOG_LIMIT
+    assert totals["log"][0]["n"] == 8 and totals["log"][-1]["n"] == stats.LOG_LIMIT + 7
+
+
+def test_recording_does_not_touch_the_shared_empty_totals():
+    before = json.dumps(stats.EMPTY, sort_keys=True)
+    stats.record_round(stats.load_totals("нет такого файла"), [Gen2(1, 5.0)], INFO)
+    stats.record_round(dict(stats.EMPTY), [Gen2(1, 5.0)], INFO)
+    assert json.dumps(stats.EMPTY, sort_keys=True) == before
+
+
+def test_the_log_survives_a_save_and_load(tmp_path):
+    path = str(tmp_path / "stats.json")
+    totals = stats.record_round(dict(stats.EMPTY), [Gen2(), Gen2(1, 8.0)], INFO)
+    stats.save_totals(totals, path)
+    assert stats.load_totals(path) == totals
+
+
+def test_a_1_1_file_loads_with_an_empty_log(tmp_path):
+    path = tmp_path / "stats.json"
+    old = {"rounds": 12, "finished": 9, "generations": 170, "best_time": 8.4,
+           "gens_to_finish": [5, 12, 30, 7, 9, 21, 16, 3, 18]}
+    path.write_text(json.dumps(old, ensure_ascii=False, indent=2), encoding="utf-8")
+    loaded = stats.load_totals(str(path))
+    assert {k: loaded[k] for k in old} == old
+    assert loaded["log"] == [] and loaded["last_curve"] == {"best": [], "mean": []}
+    assert stats.summary(loaded) == stats.summary(dict(stats.EMPTY, **old))
+
+
+def test_junk_in_the_new_keys_is_dropped(tmp_path):
+    path = tmp_path / "stats.json"
+    path.write_text(json.dumps({"rounds": 3, "log": "мусор", "last_curve": [1, 2]}), encoding="utf-8")
+    loaded = stats.load_totals(str(path))
+    assert loaded["rounds"] == 3 and loaded["log"] == [] and loaded["last_curve"] == {"best": [], "mean": []}
+    path.write_text(json.dumps({"rounds": "x", "log": [1, {"n": 1}, None], "best_time": "y"}), encoding="utf-8")
+    loaded = stats.load_totals(str(path))
+    assert loaded["rounds"] == 0 and loaded["log"] == [{"n": 1}] and loaded["best_time"] is None

@@ -22,7 +22,11 @@ def app():
     иначе сборщик мусора убьёт приложение раньше окон."""
     from PySide6.QtWidgets import QApplication
     if not _APP:
+        made = QApplication.instance() is None
         _APP.append(QApplication.instance() or QApplication([]))
+        if made:                  # тот же стиль и палитра, что в окне игры (main.main)
+            import theme
+            theme.apply(_APP[0])
     return _APP[0]
 
 

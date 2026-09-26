@@ -1,11 +1,11 @@
 import numpy as np
-import pygame
 
 import render
+from rect import Rect
 
 
 def view(w=980, h=720):
-    return pygame.Rect(0, 0, w, h)
+    return Rect(0, 0, w, h)
 
 
 def cam(lo=(-300.0, -200.0), hi=(300.0, 200.0), rect=None):
@@ -75,6 +75,30 @@ def test_follow_recentres_and_rescales():
     assert (x, y) == (c.rect.centerx, c.rect.centery)
 
 
+def test_the_qt_matrix_is_the_same_as_to_screen(qapp):
+    """Трассу QPainter ставит матрицей камеры, щелчки мышью считает to_world: разойдись они,
+    машинка была бы видна не там, где по ней попадает клик."""
+    from PySide6.QtCore import QPointF
+    c = cam(rect=Rect(37, 11, 700, 500))
+    t = c.transform()
+    for p in np.array([[0.0, 0.0], [123.0, -45.0], [-299.0, 199.0]]):
+        q = t.map(QPointF(*p))
+        assert np.allclose([q.x(), q.y()], c.to_screen(p)[0])
+
+
+def test_every_car_matrix_is_the_same_as_car_polygon(qapp):
+    import car
+    from PySide6.QtCore import QPointF
+    veh = car.random_car(np.random.default_rng(3))
+    c = cam()
+    pos = np.array([[10.0, 20.0], [-150.0, 80.0]])
+    angle = np.array([0.3, -2.4])
+    for t, p0, a in zip(render.car_transforms(c, pos, angle), pos, angle):
+        want = c.to_screen(render.car_polygon(veh.stacked, p0, a))
+        got = [t.map(QPointF(*pt)) for pt in veh.stacked]
+        assert np.allclose([[q.x(), q.y()] for q in got], want)
+
+
 def test_car_polygon_rotates_and_moves():
     shape = np.array([[10.0, 0.0], [-5.0, 4.0], [-5.0, -4.0]])
     nose = render.car_polygon(shape, np.array([100.0, 200.0]), np.pi / 2.0)[0]
@@ -89,23 +113,56 @@ def test_car_polygon_keeps_its_size():
     assert abs(before - after) < 1e-9
 
 
-def telemetry_box(watch, colour=(255, 0, 255)):
-    import os
+def test_numpy_points_reach_the_polygon_unchanged(qapp):
+    pts = np.random.default_rng(0).uniform(-500, 500, (1800, 2))
+    poly = render.qpolygon(pts)
+    assert poly.size() == 1800
+    back = np.array([[poly.at(i).x(), poly.at(i).y()] for i in range(0, 1800, 97)])
+    assert np.array_equal(back, pts[::97])
+    assert render.qpolygon(np.zeros((0, 2))).size() == 0
 
-    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
+def test_the_track_layer_is_redrawn_only_when_something_changed(qapp):
+    import track
+    trk = track.Track(track.circle_centerline(), 40.0)
+    c = render.Camera(view(), trk.lo, trk.hi)
+    layer = render.TrackLayer()
+    img = render.canvas(980, 720)
+    p = render.painter(img)
+    layer.draw(p, c, trk)
+    first = layer.pixmap
+    layer.draw(p, c, trk)
+    assert layer.pixmap is first
+    c.rect = view(600, 400)
+    c.fit(trk.lo, trk.hi)
+    layer.draw(p, c, trk)
+    p.end()
+    assert layer.pixmap is not first
+
+
+def test_fit_text_leaves_short_lines_and_trims_long_ones(qapp):
+    f = render.font(15)
+    assert render.fit_text(f, "коротко", 400) == "коротко"
+    long = "всего 123456  доехало 123456  рекорд 98765.4с"
+    cut = render.fit_text(f, long, 120)
+    assert cut.endswith("…") and render.text_width(f, cut) <= 120
+    # и обрезано не больше нужного: ещё один знак уже не влез бы
+    assert render.text_width(f, long[:len(cut)] + "…") > 120
+
+
+def telemetry_box(watch, colour=(255, 0, 255)):
     import car
 
-    pygame.init()
-    font = pygame.font.SysFont("consolas", 15)
-    box = pygame.Rect(30, 30, render.HUD_W, render.HUD_H)
-    surf = pygame.Surface((box.width + 60, box.height + 60))
-    surf.fill(colour)
-    render.draw_telemetry(surf, box, font, car.random_car(np.random.default_rng(0)), watch)
+    box = Rect(30, 30, render.HUD_W, render.HUD_H)
+    img = render.canvas(box.width + 60, box.height + 60, colour)
+    p = render.painter(img)
+    render.draw_telemetry(p, box, render.font(15), car.random_car(np.random.default_rng(0)), watch)
+    p.end()
 
-    pixels = pygame.surfarray.array3d(surf)
-    outside = np.ones(pixels.shape[:2], dtype=bool)
+    painted = render.ink(img, colour)
+    outside = np.ones(painted.shape, dtype=bool)
     outside[box.left:box.right, box.top:box.bottom] = False
-    return np.any(pixels != np.array(colour), axis=2) & outside
+    return painted & outside
 
 
 def watching(**over):
@@ -115,11 +172,11 @@ def watching(**over):
     return base
 
 
-def test_the_telemetry_stays_inside_its_box():
+def test_the_telemetry_stays_inside_its_box(qapp):
     assert not telemetry_box(watching()).any()
 
 
-def test_the_telemetry_stays_inside_for_the_longest_values():
+def test_the_telemetry_stays_inside_for_the_longest_values(qapp):
     longest = watching(index=999999, alive=False, finished=False,
                        speed=999999.0, cp="999999/999999")
     assert not telemetry_box(longest).any()
@@ -134,20 +191,19 @@ def bottom_line_right_edge(speed):
     """
     import car
 
-    pygame.init()
-    font = pygame.font.SysFont("consolas", 15)
-    box = pygame.Rect(30, 30, render.HUD_W, render.HUD_H)
-    surf = pygame.Surface((box.width + 60, box.height + 60))
-    surf.fill(render.BG)
-    render.draw_telemetry(surf, box, font,
-                          car.random_car(np.random.default_rng(0)), watching(speed=speed))
+    box = Rect(30, 30, render.HUD_W, render.HUD_H)
+    img = render.canvas(box.width + 60, box.height + 60, render.BG)
+    p = render.painter(img)
+    render.draw_telemetry(p, box, render.font(15), car.random_car(np.random.default_rng(0)),
+                          watching(speed=speed))
+    p.end()
 
-    text = np.all(pygame.surfarray.array3d(surf) == np.array(render.TEXT), axis=2)
+    text = np.all(render.pixels(img) == np.array(render.TEXT), axis=2)
     assert text.any(), "нижняя строка не нашлась"
     return int(np.argwhere(text.any(axis=1)).max())
 
 
-def test_the_checkpoint_does_not_move_when_the_speed_changes():
+def test_the_checkpoint_does_not_move_when_the_speed_changes(qapp):
     edges = {bottom_line_right_edge(speed) for speed in (0.0, 208.0, 99999.0)}
     assert len(edges) == 1
 
@@ -160,3 +216,12 @@ def test_the_car_badge_fits_beside_the_panel_text():
     longest = car.HALF_SIZE_MAX * np.sqrt(car.ASPECT_MAX)
     right = cfg.WINDOW_W - main.BADGE_INSET + longest * main.BADGE_SCALE
     assert right < cfg.WINDOW_W
+
+
+def test_the_icon_is_a_car_on_a_rounded_square(qapp):
+    import window
+    img = render.icon_image(window.icon_car(), 64)
+    assert img.width() == 64 and img.hasAlphaChannel()
+    corner, middle = img.pixelColor(0, 0), img.pixelColor(32, 32)
+    assert corner.alpha() == 0 and middle.alpha() == 255
+    assert (middle.red(), middle.green(), middle.blue()) != render.PANEL_BG
