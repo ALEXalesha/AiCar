@@ -512,6 +512,16 @@ def draw_car_badge(p, veh, at, scale, angle=0.0):
     p.setTransform(base)
 
 
+def icon_car(colour=(108, 226, 168), seed=11):
+    """Машинка для значка и меню: та же сеть, что рисует машинки в игре, с постоянным зерном."""
+    import car
+    import cppn
+    genome = cppn.random_genome(cfg.CAR_CPPN_LAYERS, np.random.default_rng(seed), cfg.CAR_INIT_SCALE)
+    vehicle = car.generate(genome)
+    vehicle.color = colour
+    return vehicle
+
+
 def icon_image(veh, size=256):
     """Значок окна и установщика: машинка носом вверх на тёмном скруглённом квадрате."""
     img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)

@@ -219,8 +219,7 @@ def test_the_car_badge_fits_beside_the_panel_text():
 
 
 def test_the_icon_is_a_car_on_a_rounded_square(qapp):
-    import window
-    img = render.icon_image(window.icon_car(), 64)
+    img = render.icon_image(render.icon_car(), 64)
     assert img.width() == 64 and img.hasAlphaChannel()
     corner, middle = img.pixelColor(0, 0), img.pixelColor(32, 32)
     assert corner.alpha() == 0 and middle.alpha() == 255

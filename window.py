@@ -1,8 +1,9 @@
 """Окно игры на Qt (2.0.0; до того - цикл pygame в main.Game.run).
 
-`MainWindow` - стопка из двух экранов (игра и статистика), место окна между запусками,
-звук по таймеру. `GameView` - экран игры: крутит `main.Game` таймером, рисует её кадр в
-paintEvent, отдаёт ей мышь и клавиши, показывает всплывающие сообщения.
+`MainWindow` - стопка экранов: меню (с него окно открывается), игра, статистика, настройки;
+место окна и настройки между запусками, звук по таймеру. `GameView` - экран игры: крутит
+`main.Game` таймером, рисует её кадр в paintEvent, отдаёт ей мышь и клавиши, показывает
+всплывающие сообщения.
 
 Цикл - QTimer с точным ходом (16 мс) и счётом кадров по часам: логика идёт ровно
 60 кадров в секунду, как у pygame с clock.tick(60), а не 62.5 от целых миллисекунд.
@@ -11,18 +12,17 @@ paintEvent, отдаёт ей мышь и клавиши, показывает �
 """
 from collections import deque
 
-import numpy as np
 from PySide6.QtCore import QElapsedTimer, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QLabel, QMainWindow, QStackedWidget, QWidget
 
-import car
 import config as cfg
-import cppn
 import main
+import prefs
 import render
 import theme
 import window_state
+from screens import MenuScreen, SettingsScreen
 from stats_screen import StatsScreen
 
 FRAME_MS = 1000.0 / cfg.FPS
@@ -32,16 +32,8 @@ TOAST_TOP, TOAST_SIDE, TOAST_MAX_W = 16, 24, 560
 BUTTONS = {Qt.MouseButton.LeftButton: 1, Qt.MouseButton.MiddleButton: 2, Qt.MouseButton.RightButton: 3}
 
 
-def icon_car():
-    """Машинка для значка: та же сеть, что рисует машинки в игре, с постоянным зерном."""
-    genome = cppn.random_genome(cfg.CAR_CPPN_LAYERS, np.random.default_rng(11), cfg.CAR_INIT_SCALE)
-    vehicle = car.generate(genome)
-    vehicle.color = (108, 226, 168)
-    return vehicle
-
-
 def make_icon():
-    vehicle = icon_car()
+    vehicle = render.icon_car()
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 128, 256):
         icon.addPixmap(QPixmap.fromImage(render.icon_image(vehicle, size)))
@@ -59,7 +51,7 @@ def key_code(event):
 
 class GameView(QWidget):
     stats_wanted = Signal()
-    quit_wanted = Signal()
+    menu_wanted = Signal()
 
     def __init__(self, game, parent=None):
         super().__init__(parent)
@@ -113,19 +105,20 @@ class GameView(QWidget):
         for _ in range(due):
             self.game.frame()
             self.frames += 1
-            if self.game.want_stats or not self.game.running:
+            if self.game.want_stats or self.game.want_menu:
                 break
         self.after_input()
 
     def after_input(self):
-        """После кадра или клавиши: сообщение, перерисовка, переход на другой экран."""
+        """После кадра, щелчка или клавиши: сообщение, перерисовка, переход на другой экран."""
         self.sync_toast()
         self.update()
         if self.game.want_stats:
             self.game.want_stats = False
             self.stats_wanted.emit()
-        if not self.game.running:
-            self.quit_wanted.emit()
+        if self.game.want_menu:
+            self.game.want_menu = False
+            self.menu_wanted.emit()
 
     def show_splash(self):
         """Трасса строится пару секунд, и всё это время цикл стоит: заставку рисуем сразу."""
@@ -206,28 +199,39 @@ class GameView(QWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, game, window_path=None):
+    def __init__(self, game, window_path=None, settings_path=None):
         super().__init__()
         self.game = game
+        self.settings_path = settings_path
+        if settings_path is not None:
+            prefs.apply(game, prefs.load(settings_path))
         self.setWindowTitle("AI Car Racing")
         self.setWindowIcon(make_icon())
         self.setStyleSheet(theme.QSS)
 
         self.stack = QStackedWidget()
+        self.menu = MenuScreen()
         self.view = GameView(game)
         self.stats_screen = StatsScreen()
-        self.stack.addWidget(self.view)
-        self.stack.addWidget(self.stats_screen)
+        self.settings_screen = SettingsScreen(game)
+        for page in (self.menu, self.view, self.stats_screen, self.settings_screen):
+            self.stack.addWidget(page)
         self.setCentralWidget(self.stack)
         self.setMinimumSize(main.MIN_W, main.MIN_H)
         self.resize(cfg.WINDOW_W, cfg.WINDOW_H)
+        self.stats_from = self.menu          # куда вернуться со статистики
 
-        self.view.stats_wanted.connect(self.show_stats)
-        self.view.quit_wanted.connect(self.close)
-        self.stats_screen.back.connect(self.show_game)
+        self.menu.play.connect(self.play)
+        self.menu.stats.connect(lambda: self.show_stats(self.menu))
+        self.menu.settings.connect(self.show_settings)
+        self.menu.quit.connect(self.close)
+        self.view.stats_wanted.connect(lambda: self.show_stats(self.view))
+        self.view.menu_wanted.connect(self.show_menu)
+        self.stats_screen.back.connect(self.back_from_stats)
+        self.settings_screen.back.connect(self.show_menu)
 
-        # Звук дописывается в устройство своим таймером: и когда игра стоит (пауза, экран
-        # статистики), иначе затухание мотора не доиграло бы до конца.
+        # Звук дописывается в устройство своим таймером: и когда игра стоит (пауза, меню,
+        # статистика), иначе затухание мотора не доиграло бы до конца.
         self.audio_timer = QTimer(self)
         self.audio_timer.setInterval(AUDIO_MS)
         self.audio_timer.timeout.connect(game.audio.pump)
@@ -238,6 +242,7 @@ class MainWindow(QMainWindow):
             self.remember = window_state.Remember(
                 self, window_path, {"width": cfg.WINDOW_W, "height": cfg.WINDOW_H,
                                     "minWidth": main.MIN_W, "minHeight": main.MIN_H})
+        self.show_menu()
 
     def show_window(self):
         if self.remember is not None:
@@ -245,28 +250,53 @@ class MainWindow(QMainWindow):
         else:
             self.show()
 
-    def begin(self):
-        """Первый раунд - когда окно уже на экране: заставка видна, пока строится трасса."""
-        handle = self.windowHandle()
-        if handle is not None and not handle.isExposed() and self.isVisible():
-            QTimer.singleShot(20, self.begin)
-            return
+    def current(self):
+        return self.stack.currentWidget()
+
+    # --- экраны -------------------------------------------------------------------------
+
+    def show_menu(self):
+        self.view.stop()
+        self.save_settings()
+        self.menu.set_info(self.game)
+        self.stack.setCurrentWidget(self.menu)
+        self.menu.play_button.setFocus()
+
+    def play(self):
+        """«Играть»: первый раз - строится трасса (заставка видна), потом - та же игра дальше."""
+        self.stack.setCurrentWidget(self.view)
+        self.view.setFocus()
         if not self.game.started:
             self.game.new_round(new_car=True)
-        self.show_game()
+        self.view.start()
 
-    def show_stats(self):
+    def show_stats(self, came_from=None):
         self.view.stop()
+        self.stats_from = came_from or self.menu
         g = self.game
+        self.stats_screen.back_button.setText("К игре" if self.stats_from is self.view else "В меню")
         self.stats_screen.refresh(g.totals, g.history if g.started else None, g.rounds,
                                   live=g.started and g.state == main.TRAINING)
         self.stack.setCurrentWidget(self.stats_screen)
         self.stats_screen.setFocus()
 
-    def show_game(self):
-        self.stack.setCurrentWidget(self.view)
-        self.view.start()
-        self.view.setFocus()
+    def back_from_stats(self):
+        if self.stats_from is self.view:
+            self.play()
+        else:
+            self.show_menu()
+
+    def show_settings(self):
+        self.view.stop()
+        self.settings_screen.load()
+        self.stack.setCurrentWidget(self.settings_screen)
+        self.settings_screen.setFocus()
+
+    def save_settings(self):
+        if self.settings_path is not None:
+            prefs.save(self.settings_path, prefs.collect(self.game))
+
+    # --- окно ---------------------------------------------------------------------------
 
     def moveEvent(self, event):
         if self.remember is not None:
@@ -282,6 +312,7 @@ class MainWindow(QMainWindow):
         self.view.stop()
         self.audio_timer.stop()
         self.game.audio.close()
+        self.save_settings()
         if self.remember is not None:
             self.remember.save()
         super().closeEvent(event)

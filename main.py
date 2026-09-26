@@ -70,7 +70,7 @@ MESSAGE_FRAMES = 150
 
 # Клавиши - коды Qt.Key. Буквы и цифры совпадают с кодами клавиш Windows (VK_R = Key_R),
 # поэтому окно подставляет код физической клавиши: на русской раскладке R - это «К».
-KEY_QUIT = int(Qt.Key.Key_Escape)
+KEY_MENU = int(Qt.Key.Key_Escape)
 KEY_PAUSE = int(Qt.Key.Key_Space)
 KEY_ROUND, KEY_TRACK, KEY_CAR = int(Qt.Key.Key_R), int(Qt.Key.Key_T), int(Qt.Key.Key_M)
 KEY_SHOW, KEY_LEADER, KEY_NOBODY = int(Qt.Key.Key_S), int(Qt.Key.Key_L), int(Qt.Key.Key_N)
@@ -105,11 +105,11 @@ class Game:
         self.hud_moved = False
         self.last_fitness = None
         self.rounds = 0
-        self.running = True
         self.mouse = None                # где мышь - для подсветки кнопок
         self.splash_text = ""
         self.on_splash = None            # окно: показать заставку, пока строится трасса
         self.want_stats = False          # нажата кнопка «статистика»: окно откроет экран
+        self.want_menu = False           # Esc или кнопка «в меню»
         self.race = None
         if start:
             self.new_round(new_car=True)
@@ -140,7 +140,7 @@ class Game:
         p.buttons([("track", "новая трасса"), ("car", "новая машина")])
         p.buttons([("show", "заезд"), ("pause", "пауза")])
         p.buttons([("save", "сохранить"), ("load", "загрузить")])
-        p.buttons([("stats", "статистика")], per_row=1)
+        p.buttons([("menu", "в меню"), ("stats", "статистика")])
         self.ui = p
 
     def resize(self, width, height):
@@ -324,8 +324,9 @@ class Game:
             self.audio.stop()
 
     def key(self, code):
-        if code == KEY_QUIT:
-            self.running = False
+        if code == KEY_MENU:
+            # До 2.0.0 Esc закрывал игру; теперь у окна есть меню, и Esc ведёт туда.
+            self.want_menu = True
         elif code == KEY_PAUSE:
             self.paused = not self.paused
         elif code == KEY_ROUND:
@@ -416,6 +417,8 @@ class Game:
             self.load_brains()
         if self.ui.clicked("stats"):
             self.want_stats = True
+        if self.ui.clicked("menu"):
+            self.want_menu = True
 
     def save_brains(self):
         fitness = self.last_fitness
@@ -615,8 +618,12 @@ def selftest(report_path, frames=400):
             win.view.grab()                       # тот же кадр через paintEvent окна
         if game.state == DONE:
             break
-    win.show_stats()
-    screen = win.stats_screen.grab()
+    screens = []
+    for show, page in ((win.show_menu, win.menu), (win.show_stats, win.stats_screen),
+                       (win.show_settings, win.settings_screen)):
+        show()
+        screens.append(page.grab())
+    screen = screens[1]
     win.close()
     audio.close()
 
@@ -637,6 +644,8 @@ def selftest(report_path, frames=400):
         f"кадр:             {np.mean(paint_ms):.1f} мс в среднем, кадров {len(paint_ms)}, "
         f"{img.width()}x{img.height()}",
         f"статистика:       экран {screen.width()}x{screen.height()}, раундов {game.totals['rounds']}",
+        f"экраны:           меню, игра, статистика, настройки - "
+        f"{'нарисованы' if all(not s.isNull() for s in screens) else 'ПУСТОЙ КАДР'}",
         "OK",
     ]
     with open(report_path, "w", encoding="utf-8") as f:
@@ -669,10 +678,11 @@ def main(argv=None):
     app.setApplicationName("AiCar")
     app.setApplicationDisplayName("AI Car Racing")
     theme.apply(app)
+    # Окно открывается меню; трасса строится по «Играть», с заставкой.
     game = Game(seed=args.seed, audio=sound.SoundBank(cfg.VOLUME), start=False)
-    win = window.MainWindow(game, window_path=paths.user_file("window.json"))
+    win = window.MainWindow(game, window_path=paths.user_file("window.json"),
+                            settings_path=paths.user_file("settings.json"))
     win.show_window()
-    win.begin()
     return app.exec()
 
 
