@@ -257,7 +257,9 @@ class MainWindow(QMainWindow):
 
     def show_stats(self):
         self.view.stop()
-        self.stats_screen.refresh(self.game.totals, self.game.history)
+        g = self.game
+        self.stats_screen.refresh(g.totals, g.history if g.started else None, g.rounds,
+                                  live=g.started and g.state == main.TRAINING)
         self.stack.setCurrentWidget(self.stats_screen)
         self.stats_screen.setFocus()
 
