@@ -1,7 +1,7 @@
 Unicode true
 
 !define APP "AiCar"
-!define VERSION "1.1.0"
+!define VERSION "2.0.0"
 !define PUBLISHER "ALEXaloysha"
 !define REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP}"
 
@@ -62,7 +62,7 @@ Section "Uninstall"
   DeleteRegKey HKCU "${REGKEY}"
   DeleteRegKey HKCU "Software\${APP}"
 
-  MessageBox MB_YESNO|MB_ICONQUESTION "Удалить сохранения и статистику из $LOCALAPPDATA\${APP}?" IDNO keep
+  MessageBox MB_YESNO|MB_ICONQUESTION "Удалить сохранения, статистику и настройки из $LOCALAPPDATA\${APP}?" IDNO keep
     RMDir /r "$LOCALAPPDATA\${APP}"
   keep:
 SectionEnd

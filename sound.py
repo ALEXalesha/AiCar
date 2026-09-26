@@ -170,7 +170,7 @@ def open_sink():
     """Открыть устройство вывода по умолчанию в формате int16. (sink, io, rate, channels)
     или исключение с понятным текстом. Формат берётся у открытого устройства, а не тот,
     что просили: в 1.0 pygame отдал стерео на просьбу о моно, и звук молчал (docs/modules/sound.md)."""
-    from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
+    from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
     device = QMediaDevices.defaultAudioOutput()
     if device.isNull():
@@ -188,9 +188,13 @@ def open_sink():
     sink = QAudioSink(device, fmt)
     sink.setBufferSize(int(fmt.sampleRate() * fmt.channelCount() * 2 * BUFFER_MS / 1000))
     io = sink.start()
-    if io is None or sink.error() != QAudio.Error.NoError:
+    # По имени, а не сравнением с QAudio.Error.NoError: в Qt 6.11 ошибка приходит enum'ом
+    # QtAudio.Error, и с QAudio.Error она не равна никогда - звук молчал при исправном
+    # устройстве (нашла самопроверка: «не открылось (NoError)»).
+    problem = getattr(sink.error(), "name", str(sink.error()))
+    if io is None or problem != "NoError":
         sink.stop()
-        raise RuntimeError(f"устройство не открылось ({sink.error().name})")
+        raise RuntimeError(f"устройство не открылось ({problem})")
     real = sink.format()
     return sink, io, real.sampleRate(), real.channelCount()
 

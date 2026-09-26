@@ -224,6 +224,22 @@ def test_the_real_device_never_raises(qapp):
     assert not bank.enabled
 
 
+def test_a_working_sound_card_is_really_opened(qapp):
+    """Есть устройство вывода - звук обязан открыться. Без этого теста звук молчал бы при
+    исправной карте и никто бы не заметил: игра без звука не падает (так и было - ошибку
+    Qt сравнивали не с тем enum'ом)."""
+    import pytest
+    from PySide6.QtMultimedia import QMediaDevices
+    if QMediaDevices.defaultAudioOutput().isNull():
+        pytest.skip("на этой машине нет устройства вывода звука")
+    bank = sound.SoundBank(volume=0.0)
+    try:
+        assert bank.enabled, bank.reason
+        assert bank.rate > 0 and bank.pump() > 0
+    finally:
+        bank.close()
+
+
 def test_volume_is_clamped():
     bank = sound.SoundBank(enabled=False)
     bank.set_volume(5.0)
