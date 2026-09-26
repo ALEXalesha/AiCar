@@ -123,3 +123,115 @@ def test_volume_is_clamped(monkeypatch):
     assert bank.volume == 1.0
     bank.set_volume(-1.0)
     assert bank.volume == 0.0
+
+
+# --- микшер (2.0.0): мотор с перекрёстным затуханием и эффекты поверх ------------------
+
+RATE = 22050
+
+
+def mixer(volume=1.0):
+    m = sound.Mixer(RATE, sound.engine_bank(rate=RATE), sound.crash_sample(RATE),
+                    sound.finish_sample(RATE))
+    m.set_volume(volume)
+    return m
+
+
+def test_mixer_renders_exactly_what_was_asked():
+    out = mixer().render(1234)
+    assert out.dtype == np.int16 and out.shape == (1234,)
+
+
+def test_mixer_is_silent_without_the_engine():
+    assert not mixer().render(4000).any()
+
+
+def test_engine_plays_after_a_level_is_set():
+    m = mixer()
+    m.set_level(3)
+    assert np.abs(m.render(4000).astype(np.int32)).max() > 1000
+
+
+def test_chunks_join_without_a_seam():
+    whole, parts = mixer(), mixer()
+    for m in (whole, parts):
+        m.set_level(2)
+    a = whole.render(3000)
+    b = np.concatenate([parts.render(n) for n in (1, 299, 700, 2000)])
+    assert np.array_equal(a, b)
+
+
+def test_switching_the_level_crossfades_without_a_dip():
+    """Шаг соседних отсчётов тут ничего не докажет: мотор - пила, у неё и так обрыв
+    каждый период. Проверяется сам переход: старая петля затухает, новая нарастает,
+    вместе они всё время дают полную громкость."""
+    m = mixer()
+    m.set_level(2)
+    m.render(RATE)
+    m.set_level(9)
+    fade = int(RATE * sound.SWITCH_FADE_MS / 1000)
+    shares = []
+    for _ in range(4):
+        m.render(fade // 4)
+        shares.append((m.gain[2], m.gain[9]))
+    assert all(abs(old + new - 1.0) < 1e-9 for old, new in shares)
+    olds = [old for old, _ in shares]
+    assert olds == sorted(olds, reverse=True) and 0.1 < olds[1] < 0.9
+
+
+def test_the_old_level_fades_out_in_the_switch_time():
+    m = mixer()
+    m.set_level(2)
+    m.render(RATE)
+    m.set_level(9)
+    m.render(int(RATE * sound.SWITCH_FADE_MS / 1000) + 2)
+    assert m.playing_levels() == [9]
+
+
+def test_stop_fades_out_instead_of_cutting():
+    m = mixer()
+    m.set_level(5)
+    m.render(RATE)
+    m.set_level(-1)
+    fade = m.render(int(RATE * sound.SWITCH_FADE_MS / 1000) + 2).astype(np.float64)
+    quarters = [np.sqrt(np.mean(q ** 2)) for q in np.array_split(fade[:-2], 4)]
+    assert quarters[0] > 500, "мотор оборвался сразу"
+    assert quarters == sorted(quarters, reverse=True)
+    assert not m.render(2000).any()
+    assert m.playing_levels() == []
+
+
+def test_effects_play_once_on_top_of_the_engine():
+    m = mixer()
+    m.play("crash")
+    out = m.render(len(sound.crash_sample(RATE)) + 500).astype(np.int32)
+    assert np.abs(out[:500]).max() > 1000
+    assert not out[-400:].any()
+    assert m.effects == []
+
+
+def test_loud_mix_is_clipped_not_wrapped():
+    m = mixer(volume=1.0)
+    m.set_level(11)
+    for _ in range(6):
+        m.play("finish")
+        m.play("crash")
+    out = m.render(3000).astype(np.int32)
+    assert out.max() <= 32767 and out.min() >= -32767
+    assert not np.any((out[1:] > 20000) & (out[:-1] < -20000)), "перелив через край int16"
+
+
+def test_zero_volume_is_silence():
+    m = mixer(volume=0.0)
+    m.set_level(4)
+    m.play("crash")
+    assert not m.render(3000).any()
+
+
+def test_the_engine_is_half_as_loud_as_the_effects():
+    engine_peak = np.abs(sound.engine_bank(rate=RATE)[4].astype(np.int32)).max()
+    m = mixer(volume=0.8)
+    m.set_level(4)
+    m.render(RATE)
+    out = np.abs(m.render(RATE // 2).astype(np.int32)).max()
+    assert abs(out - engine_peak * 0.8 * 0.5) <= engine_peak * 0.02
