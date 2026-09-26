@@ -200,8 +200,10 @@ def test_the_live_round_is_shown_while_training(screen, real_stats_file):
     class S:
         def __init__(self, best, mean):
             self.best, self.mean = best, mean
-    screen.refresh(stats.load_totals(str(real_stats_file)), [S(10, 1), S(20, 2), S(35, 4)], 9, live=True)
-    assert screen.chart_training.title.endswith("раунд 9, идёт")
+    totals = stats.load_totals(str(real_stats_file))
+    screen.refresh(totals, [S(10, 1), S(20, 2), S(35, 4)], live=True)
+    # номер сквозной: идущий раунд - следующий за записанными в файл
+    assert screen.chart_training.title.endswith(f"раунд {totals['rounds'] + 1}, идёт")
     assert screen.chart_training.points[-1] == (2.0, 35.0)
 
 

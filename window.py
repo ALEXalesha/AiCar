@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
         self.stats_from = came_from or self.menu
         g = self.game
         self.stats_screen.back_button.setText("К игре" if self.stats_from is self.view else "В меню")
-        self.stats_screen.refresh(g.totals, g.history if g.started else None, g.rounds,
+        self.stats_screen.refresh(g.totals, g.history if g.started else None,
                                   live=g.started and g.state == main.TRAINING)
         self.stack.setCurrentWidget(self.stats_screen)
         self.stats_screen.setFocus()

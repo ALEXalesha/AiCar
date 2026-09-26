@@ -203,7 +203,7 @@ class Chart(QWidget):
 
         # Ось x: деления с подписями и название оси под ними.
         axis = QPen(QColor(theme.MUTED), 1)
-        for t in x_ticks(x0, x1):
+        for t in x_ticks(x0, x1, most=int(max(6, min(12, plot.width() // 70)))):
             x = at(t, y0).x()
             p.setPen(axis)
             p.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + 4))

@@ -250,9 +250,9 @@ class StatsScreen(QWidget):
 
     # --- данные ---------------------------------------------------------------------------
 
-    def refresh(self, totals, history=None, round_no=None, live=False):
-        """totals - итоги (stats.load_totals); history - поколения идущего раунда из игры,
-        round_no и live - его номер и идёт ли обучение: тогда главный график - про него."""
+    def refresh(self, totals, history=None, live=False):
+        """totals - итоги (stats.load_totals); history - поколения раунда из игры, live - идёт
+        ли его обучение (тогда он ещё не записан, и главный график - про него)."""
         rounds, finished = totals.get("rounds", 0), totals.get("finished", 0)
         self.values["rounds"].setText(str(rounds))
         self.values["finished"].setText(str(finished))
@@ -291,17 +291,19 @@ class StatsScreen(QWidget):
         self.cars_label.setText(self._cars(cars(totals)))
 
         points = curves(totals, history)
-        self.chart_training.title = self._training_title(totals, history, round_no, live)
+        self.chart_training.title = self._training_title(totals, history, live)
         self.chart_training.set_points(points["training"], points["training_mean"])
         self.chart_gens.set_points(points["gens"])
         self.chart_time.set_points(points["time"])
         self.chart_progress.set_points(points["progress"])
 
     @staticmethod
-    def _training_title(totals, history, round_no, live):
-        """Какой раунд на графике: идущий (из игры) или последний записанный (из файла)."""
-        if history and len(history) >= 2 and round_no:
-            return f"{TRAINING_TITLE}: раунд {round_no}" + (", идёт" if live else "")
+    def _training_title(totals, history, live):
+        """Какой раунд на графике. Номер - сквозной, как у графиков по раундам (из файла), а не
+        счёт раундов этого запуска игры: идущий раунд - следующий за записанными."""
+        rounds = totals.get("rounds", 0)
+        if live and history and len(history) >= 2 and _num(rounds):
+            return f"{TRAINING_TITLE}: раунд {rounds + 1}, идёт"
         log = entries(totals)
         n = log[-1].get("n") if log else None
         return f"{TRAINING_TITLE}: раунд {n}" if _num(n) else TRAINING_TITLE
