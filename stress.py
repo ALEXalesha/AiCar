@@ -7,14 +7,17 @@ import traceback
 
 import numpy as np
 
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-# Звук тоже заглушкой и тоже сразу. Раньше он ставился лениво, в `the_game`, а
-# свойства панели ещё до того зовут `pygame.init()` - он поднимает все
-# подсистемы, звук в том числе. На сервере сборки звуковой карты нет, и круг
-# вставал там на двенадцать минут, пока его не снимал предел шага.
-os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+# Процессор делят обучения других проектов: numpy не берёт все ядра.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "4")
 
-import pygame
+import offscreen
+
+# Qt без экрана и сразу, до любого импорта Qt: окно не нужно, всё рисуется в картинку в
+# памяти (как раньше SDL_VIDEODRIVER=dummy у pygame). Звук игра по умолчанию не открывает
+# вовсе (main.Game без audio - выключенный SoundBank): на сервере сборки звуковой карты нет,
+# и при pygame круг однажды вставал там на двенадцать минут из-за звука.
+offscreen.setup()
 
 import brain
 import car
@@ -29,6 +32,7 @@ import sound
 import stats
 import track
 import trackgen
+from rect import Rect
 
 # Проверка гоняет настоящую игру, а та пишет мозги и статистику. Уводим запись
 # во временную папку: испортить сохранения игрока прогоном проверки недопустимо.
@@ -650,13 +654,11 @@ def _(rng):
 
 @check("панель: ползунок не выходит за свои пределы")
 def _(rng):
-    import pygame
     import ui
-    pygame.init()
     lo, hi = sorted(rng.uniform(-500.0, 500.0, 2))
     if hi - lo < 1e-6:
         return
-    box = pygame.Rect(int(rng.integers(0, 400)), int(rng.integers(0, 400)), 200, ui.SLIDER_H)
+    box = Rect(int(rng.integers(0, 400)), int(rng.integers(0, 400)), 200, ui.SLIDER_H)
     bar = ui.Slider(box, "тест", lo, hi, rng.uniform(lo, hi))
     for _ in range(6):
         bar.value = rng.uniform(-1e6, 1e6)
@@ -665,46 +667,38 @@ def _(rng):
 
 @check("панель: клик по полосе задаёт значение по положению")
 def _(rng):
-    import pygame
     import ui
-    pygame.init()
-    bar = ui.Slider(pygame.Rect(100, 200, 200, ui.SLIDER_H), "тест", 0.0, 100.0, 50.0)
+    bar = ui.Slider(Rect(100, 200, 200, ui.SLIDER_H), "тест", 0.0, 100.0, 50.0)
     share = float(rng.uniform(0.0, 1.0))
     x = bar.bar.left + int(share * (bar.bar.width - 1))
-    bar.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(x, bar.bar.centery), button=1))
+    bar.handle(ui.press((x, bar.bar.centery)))
     assert abs(bar.value - share * 100.0) < 2.0
 
 
 @check("панель: переключатель возвращается на круг")
 def _(rng):
-    import pygame
     import ui
-    pygame.init()
     options = [f"пункт {i}" for i in range(int(rng.integers(2, 8)))]
-    toggle = ui.Toggle(pygame.Rect(0, 0, 100, ui.TOGGLE_H), "тест", options)
+    toggle = ui.Toggle(Rect(0, 0, 100, ui.TOGGLE_H), "тест", options)
     for _ in range(len(options)):
-        toggle.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(50, 10), button=1))
+        toggle.handle(ui.release((50, 10)))
     assert toggle.value == options[0]
 
 
 @check("панель: кнопка не срабатывает при отпускании снаружи")
 def _(rng):
-    import pygame
     import ui
-    pygame.init()
-    b = ui.Button(pygame.Rect(0, 0, 100, ui.BUTTON_H), "тест")
-    b.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(50, 10), button=1))
+    b = ui.Button(Rect(0, 0, 100, ui.BUTTON_H), "тест")
+    b.handle(ui.press((50, 10)))
     away = (int(rng.integers(200, 900)), int(rng.integers(200, 900)))
-    b.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=away, button=1))
+    b.handle(ui.release(away))
     assert not b.take()
 
 
 @check("панель: виджеты не наезжают друг на друга и не вылезают")
 def _(rng):
-    import pygame
     import ui
-    pygame.init()
-    panel = ui.Panel(pygame.Rect(int(rng.integers(0, 600)), 0, 300, 720), None)
+    panel = ui.Panel(Rect(int(rng.integers(0, 600)), 0, 300, 720), None)
     panel.skip(int(rng.integers(0, 200)))
     for i in range(int(rng.integers(1, 6))):
         panel.slider(f"s{i}", "п", 0, 1, 0.5)
@@ -723,11 +717,10 @@ def _(rng):
 
 @check("камера: вся область помещается в кадр")
 def _(rng):
-    import pygame
     import render
     lo = rng.uniform(-2000.0, 2000.0, 2)
     hi = lo + rng.uniform(10.0, 3000.0, 2)
-    view = pygame.Rect(0, 0, int(rng.integers(200, 1400)), int(rng.integers(200, 1000)))
+    view = Rect(0, 0, int(rng.integers(200, 1400)), int(rng.integers(200, 1000)))
     cam = render.Camera(view, lo, hi)
     corners = np.array([[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]])
     pts = cam.to_screen(corners)
@@ -737,22 +730,20 @@ def _(rng):
 
 @check("камера: перевод туда и обратно возвращает точку")
 def _(rng):
-    import pygame
     import render
     lo = rng.uniform(-1000.0, 1000.0, 2)
     hi = lo + rng.uniform(50.0, 2000.0, 2)
-    cam = render.Camera(pygame.Rect(0, 0, 980, 720), lo, hi)
+    cam = render.Camera(Rect(0, 0, 980, 720), lo, hi)
     point = rng.uniform(lo, hi)
     assert np.allclose(cam.to_world(cam.to_screen(point)[0]), point, atol=1e-6)
 
 
 @check("камера: масштаб одинаков по обеим осям")
 def _(rng):
-    import pygame
     import render
     lo = rng.uniform(-500.0, 500.0, 2)
     hi = lo + rng.uniform(50.0, 1500.0, 2)
-    cam = render.Camera(pygame.Rect(0, 0, 980, 720), lo, hi)
+    cam = render.Camera(Rect(0, 0, 980, 720), lo, hi)
     step = float(rng.uniform(1.0, 100.0))
     dx = cam.to_screen(np.array([[0.0, 0.0], [step, 0.0]]))
     dy = cam.to_screen(np.array([[0.0, 0.0], [0.0, step]]))
@@ -794,22 +785,30 @@ def _(rng):
 # ---------------------------------------------------------------- слой отрисовки
 
 def canvas(ground, w=cfg.WINDOW_W, h=cfg.WINDOW_H):
-    import pygame
-    pygame.init()
-    surf = pygame.Surface((w, h))
-    surf.fill(ground)
-    return surf
+    import render
+    offscreen.app()
+    return render.canvas(w, h, ground)
 
 
-def ink(surf, ground):
+def ink(image, ground):
     """Маска (ширина, высота): True там, где что-то нарисовали поверх фона."""
-    import pygame
-    return np.any(pygame.surfarray.array3d(surf) != np.array(ground), axis=2)
+    import render
+    return render.ink(image, ground)
+
+
+def drawn(image, draw):
+    """Нарисовать на картинке: draw получает QPainter со сглаживанием."""
+    import render
+    p = render.painter(image)
+    try:
+        draw(p)
+    finally:
+        p.end()
+    return image
 
 
 def field_view():
-    import pygame
-    return pygame.Rect(0, 0, cfg.WINDOW_W - cfg.PANEL_W, cfg.WINDOW_H)
+    return Rect(0, 0, cfg.WINDOW_W - cfg.PANEL_W, cfg.WINDOW_H)
 
 
 def edge_positions(trk):
@@ -839,9 +838,8 @@ def _(rng):
     game.race.angle[:] = rng.uniform(-np.pi, np.pi, game.race.n)
     game.race.alive[:] = rng.integers(0, 2, game.race.n).astype(bool)
 
-    game.screen.fill(render.BG)
-    game.draw_field()
-    assert not ink(game.screen, render.BG)[game.panel_rect.left:, :].any(), "краска на панели"
+    image = game.snapshot(game.draw_field)
+    assert not ink(image, render.BG)[game.panel_rect.left:, :].any(), "краска на панели"
 
 
 @check("отрисовка: стены трассы помещаются в кадр", SLOW)
@@ -863,7 +861,7 @@ def _(rng):
     cam = render.Camera(view, np.array([-100.0, -100.0]), np.array([100.0, 100.0]))
     surf = canvas(render.BG)
     for points in ([], [[0.0, 0.0]], np.zeros((1, 2))):
-        render.draw_path(surf, cam, points, render.TEXT)
+        drawn(surf, lambda p: render.draw_path(p, cam, points, render.TEXT))
     assert not ink(surf, render.BG).any(), "из одной точки нарисовалась линия"
 
 
@@ -874,7 +872,7 @@ def _(rng):
     cam = render.Camera(view, np.array([-100.0, -100.0]), np.array([100.0, 100.0]))
     surf = canvas(render.BG)
     a, b = rng.uniform(-90.0, 90.0, (2, 2))
-    render.draw_path(surf, cam, np.stack([a, b]), render.TEXT)
+    drawn(surf, lambda p: render.draw_path(p, cam, np.stack([a, b]), render.TEXT))
     if np.linalg.norm(a - b) * cam.scale >= 2.0:
         assert ink(surf, render.BG).any(), "линия не нарисовалась"
 
@@ -911,7 +909,8 @@ def _(rng):
     scale = float(rng.uniform(1.5, 3.0))
     at = (240, 120)
     surf = canvas(render.PANEL_BG, 480, 240)
-    render.draw_car_badge(surf, veh, at, scale, float(rng.uniform(-np.pi, np.pi)))
+    angle = float(rng.uniform(-np.pi, np.pi))
+    drawn(surf, lambda p: render.draw_car_badge(p, veh, at, scale, angle))
     mask = ink(surf, render.PANEL_BG)
     assert mask.any(), "значок не нарисовался"
     xs = np.argwhere(mask.any(axis=1)).ravel()
@@ -919,6 +918,7 @@ def _(rng):
     # Граница - наибольший радиус точки контура, а не наибольшая координата:
     # поворот сохраняет радиус, поэтому угловая точка (9.2, 5.0) может уехать
     # по одной оси на 10.5. И не veh.width - колёса выступают за него на десятую.
+    # Плюс два пикселя: край многоугольника со сглаживанием красит соседний пиксель.
     reach = float(np.linalg.norm(veh.stacked, axis=1).max()) * scale + 2.0
     assert at[0] - reach <= xs.min() and xs.max() <= at[0] + reach
     assert at[1] - reach <= ys.min() and ys.max() <= at[1] + reach
@@ -931,9 +931,9 @@ def the_game():
     """Одна игра на весь прогон: сборка стоит секунды, а нам нужна только раскладка."""
     global GAME
     if GAME is None:
-        os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
         import main
-        GAME = main.Game(seed=0)
+        offscreen.app()
+        GAME = main.Game(seed=0)           # звук выключен: Game без audio
     return GAME
 
 
@@ -974,9 +974,7 @@ def _(rng):
     game = the_game()
     shuffle_panel(game, rng)
 
-    game.screen.fill(render.BG)
-    game.draw_stats()
-    mask = ink(game.screen, render.BG)
+    mask = ink(game.snapshot(game.draw_stats), render.BG)
     assert mask.any(), "статистика не нарисовалась"
 
     xs = np.argwhere(mask.any(axis=1)).ravel()
@@ -1003,25 +1001,24 @@ def _(rng):
     # текст просто закрашен. Подменяем отрисовку значка на запись его координат,
     # получаем настоящий прямоугольник и смотрим, попал ли в него текст.
     spot = {}
-    drawn = render.draw_car_badge
+    real_badge = render.draw_car_badge
 
-    def remember(surf, veh, at, scale, angle=0.0):
+    def remember(p, veh, at, scale, angle=0.0):
         spot["at"], spot["scale"] = at, scale
 
     render.draw_car_badge = remember
     try:
-        game.screen.fill(render.BG)
-        game.draw_stats()
+        image = game.snapshot(game.draw_stats)
     finally:
-        render.draw_car_badge = drawn
+        render.draw_car_badge = real_badge
 
     assert spot, "значок не рисовался"
     reach = main.badge_reach(game.car)
     tall = float(np.abs(game.car.stacked[:, 1]).max()) * spot["scale"]
-    box = pygame.Rect(int(spot["at"][0] - reach), int(spot["at"][1] - tall),
-                      int(2 * reach), int(2 * tall))
+    box = Rect(int(spot["at"][0] - reach), int(spot["at"][1] - tall),
+               int(2 * reach), int(2 * tall))
 
-    mask = ink(game.screen, render.BG)
+    mask = ink(image, render.BG)
     under = mask[box.left:box.right, box.top:box.bottom]
     assert not under.any(), f"текст под значком: {int(under.sum())} точек в {tuple(box)}"
 
@@ -1046,10 +1043,9 @@ def _(rng):
     game = the_game()
     shuffle_panel(game, rng)
 
-    game.screen.fill(render.BG)
-    game.ui.widgets["graph"].draw(game.screen, game.history)
-    game.ui.draw(game.screen)
-    mask = ink(game.screen, render.BG)
+    image = game.snapshot(lambda p: game.ui.widgets["graph"].draw(p, game.history),
+                          lambda p: game.ui.draw(p))
+    mask = ink(image, render.BG)
     xs = np.argwhere(mask.any(axis=1)).ravel()
     ys = np.argwhere(mask.any(axis=0)).ravel()
     panel = game.panel_rect
@@ -1060,25 +1056,28 @@ def _(rng):
 # ---------------------------------------------------------------- долгий прогон
 
 def click(game, key):
-    """Настоящий клик по кнопке панели: нажатие и отпускание внутри неё."""
-    import pygame
+    """Настоящий клик по кнопке панели: нажатие и отпускание внутри неё - так же, как их
+    отдаёт игре окно (Game.mouse_down / mouse_up)."""
     at = game.ui.widgets[key].rect.center
-    for kind in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
-        game.ui.handle(pygame.event.Event(kind, button=1, pos=at))
+    game.mouse_down(at)
+    game.mouse_up(at)
 
 
 def poke(game, rng):
     """Случайное вмешательство игрока между кадрами."""
-    import pygame
+    import main
 
     roll = int(rng.integers(0, 14))
     if roll == 0:
-        game.key(int(rng.choice([pygame.K_SPACE, pygame.K_l, pygame.K_n, pygame.K_s,
-                                 pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4])))
+        game.key(int(rng.choice([main.KEY_PAUSE, main.KEY_LEADER, main.KEY_NOBODY, main.KEY_SHOW,
+                                 main.KEY_SPEED_1, main.KEY_SPEED_1 + 1, main.KEY_SPEED_1 + 2,
+                                 main.KEY_SPEED_4, main.KEY_MENU])))
     elif roll == 1:
         # "новую трассу" не трогаем: она эволюционирует трассу и стоит секунды.
         # "новая машина" трассу не пересобирает, поэтому дешёвая и участвует.
-        click(game, str(rng.choice(["show", "pause", "save", "load", "car"])))
+        # «статистика» и «в меню» без окна только поднимают флаг - окно их гасит само.
+        click(game, str(rng.choice(["show", "pause", "save", "load", "car", "stats", "menu"])))
+        game.want_stats = game.want_menu = False
     elif roll == 2:
         name = str(rng.choice(["mut_sigma", "elite_frac", "pop_size", "generations", "volume"]))
         bar = game.ui.widgets[name]
@@ -1091,6 +1090,16 @@ def poke(game, rng):
         game.click_field((int(rng.integers(0, cfg.WINDOW_W)), int(rng.integers(0, cfg.WINDOW_H))))
     elif roll == 5 and game.hud_grab is not None:
         game.drag_hud((int(rng.integers(-500, 2000)), int(rng.integers(-500, 2000))))
+    elif roll == 6:
+        # мышью, как её отдаёт окно: нажать, протащить, отпустить где угодно
+        game.mouse_down((int(rng.integers(0, game.width)), int(rng.integers(0, game.height))))
+        game.mouse_move((int(rng.integers(-300, game.width + 300)), int(rng.integers(-300, game.height + 300))))
+        game.mouse_up((int(rng.integers(0, game.width)), int(rng.integers(0, game.height))))
+        game.want_stats = game.want_menu = False
+    elif roll == 7:
+        # окно потянули за край (2.0.0: размер больше не постоянный)
+        import main
+        game.resize(int(rng.integers(main.MIN_W, 2600)), int(rng.integers(main.MIN_H, 1500)))
 
 
 def hold(game):
@@ -1133,6 +1142,11 @@ def hold(game):
     assert game.watched in (main.WATCH_LEADER, main.WATCH_NONE) or         0 <= game.watched < game.race.n
     assert game.view.contains(game.hud)
 
+    # Окно любого размера делится на поле и панель без щели и наложения, панель - целиком.
+    assert game.view.right == game.panel_rect.left and game.panel_rect.right == game.width
+    for key, widget in game.ui.widgets.items():
+        assert game.panel_rect.contains(widget.rect), (key, tuple(widget.rect), game.width, game.height)
+
     for key in ("rounds", "finished"):
         assert game.totals[key] >= 0
     if game.totals["best_time"] is not None:
@@ -1145,18 +1159,17 @@ def _(rng):
     game.new_round(new_car=bool(rng.integers(0, 2)))
     hold(game)
 
-    import render
-    for frame in range(int(rng.integers(200, 900))):
-        poke(game, rng)
-        game.apply_buttons()
-        game.advance()
-        hold(game)
-        # Изредка рисуем полный кадр: раскладка обязана переживать любое
-        # состояние, включая пустую историю, паузу и слежение ни за кем.
-        if frame % 25 == 0:
-            game.screen.fill(render.BG)
-            game.draw_field()
-            game.draw_panel()
+    try:
+        for frame in range(int(rng.integers(200, 900))):
+            poke(game, rng)
+            game.frame()
+            hold(game)
+            # Изредка рисуем полный кадр: раскладка обязана переживать любое
+            # состояние, включая пустую историю, паузу, слежение ни за кем и любой размер.
+            if frame % 25 == 0:
+                game.snapshot()
+    finally:
+        game.resize(cfg.WINDOW_W, cfg.WINDOW_H)
 
 
 @check("долгий прогон: счётчики только растут через несколько раундов", HEAVY)
@@ -1183,6 +1196,11 @@ def _(rng):
                 break
         assert game.state != main.TRAINING, "раунд не кончился за 40 кадров"
         assert len(game.history) >= 1
+        # 2.0.0: раунд записан и для экрана статистики - последним, со своим номером
+        # и с кривой обучения ровно в столько поколений, сколько он шёл.
+        last = game.totals["log"][-1]
+        assert last["n"] == game.totals["rounds"], (last["n"], game.totals["rounds"])
+        assert last["gens"] == len(game.history) == len(game.totals["last_curve"]["best"])
     assert game.totals["rounds"] >= 3, f"засчитано раундов: {game.totals['rounds']}"
 
 
@@ -1338,36 +1356,32 @@ def _(rng):
 
 @check("панель: любой текст обрезается по ширине")
 def _(rng):
-    import pygame
     import render
-    pygame.init()
-    font = pygame.font.SysFont("consolas", int(rng.integers(9, 24)))
+    offscreen.app()
+    font = render.font(int(rng.integers(9, 24)))
     width = int(rng.integers(20, 400))
     alphabet = "абвгдеёжзиклмнопрстуфхцчшщыэюя 0123456789"
     text = "".join(rng.choice(list(alphabet), int(rng.integers(0, 200))))
-    assert font.size(render.fit_text(font, text, width))[0] <= width
+    assert render.text_width(font, render.fit_text(font, text, width)) <= width
 
 
 @check("панель: короткий текст не трогается")
 def _(rng):
-    import pygame
     import render
-    pygame.init()
-    font = pygame.font.SysFont("consolas", 15)
+    offscreen.app()
+    font = render.font(15)
     text = "".join(rng.choice(list("абвгд "), int(rng.integers(0, 8))))
     assert render.fit_text(font, text, 400) == text
 
 
 @check("телеметрия: ничего не выходит за окошко")
 def _(rng):
-    import pygame
     import render
-    pygame.init()
-    font = pygame.font.SysFont("consolas", 15)
-    box = pygame.Rect(30, 30, render.HUD_W, render.HUD_H)
-    surf = pygame.Surface((box.width + 60, box.height + 60))
+    offscreen.app()
+    font = render.font(15)
+    box = Rect(30, 30, render.HUD_W, render.HUD_H)
     OUTSIDE = (255, 0, 255)
-    surf.fill(OUTSIDE)
+    surf = canvas(OUTSIDE, box.width + 60, box.height + 60)
 
     veh = car.random_car(rng)
     watch = {
@@ -1380,27 +1394,82 @@ def _(rng):
         "throttle": float(rng.uniform(-1.0, 1.0)),
         "cp": f"{int(rng.integers(0, 100000))}/{int(rng.integers(0, 100000))}",
     }
-    render.draw_telemetry(surf, box, font, veh, watch)
+    drawn(surf, lambda p: render.draw_telemetry(p, box, font, veh, watch))
 
-    pixels = pygame.surfarray.array3d(surf)
-    outside = np.ones(pixels.shape[:2], dtype=bool)
+    outside = np.ones((surf.width(), surf.height()), dtype=bool)
     outside[box.left:box.right, box.top:box.bottom] = False
-    painted = np.any(pixels != np.array(OUTSIDE), axis=2) & outside
+    painted = ink(surf, OUTSIDE) & outside
     assert not painted.any(), f"краска за окошком в {np.argwhere(painted)[0].tolist()}"
 
 
 @check("сохранения: строка итогов влезает в панель после обрезки")
 def _(rng):
-    import pygame
     import render
-    pygame.init()
-    font = pygame.font.SysFont("consolas", 15)
+    offscreen.app()
+    font = render.font(15)
     rounds = int(rng.integers(0, 1000000))
     totals = dict(stats.EMPTY, rounds=rounds,
                   finished=int(rng.integers(0, rounds + 1)),
                   best_time=float(rng.uniform(0.0, 100000.0)))
     width = cfg.PANEL_W - 28
-    assert font.size(render.fit_text(font, stats.summary(totals), width))[0] <= width
+    assert render.text_width(font, render.fit_text(font, stats.summary(totals), width)) <= width
+
+
+# ---------------------------------------------------------------- 2.0.0: окно на Qt
+
+@check("панель при любой высоте окна: виджеты внутри и не наезжают")
+def _(rng):
+    import main
+    game = the_game()
+    try:
+        game.resize(int(rng.integers(main.MIN_W, 3000)), int(rng.integers(main.MIN_H, 2000)))
+        boxes = [(key, w.rect) for key, w in game.ui.widgets.items()]
+        for i, (key, box) in enumerate(boxes):
+            assert game.panel_rect.contains(box), (key, tuple(box))
+            assert box.height > 0, key
+            for other_key, other in boxes[i + 1:]:
+                assert not box.colliderect(other), (key, other_key)
+        top_widget = min(box.top for _, box in boxes)
+        stats_bottom = game.panel_rect.top + game.ui.top_pad + 30 + 5 * 18 + 2 * 17
+        assert stats_bottom <= top_widget + 2, f"статистике {stats_bottom}, виджеты с {top_widget}"
+    finally:
+        game.resize(cfg.WINDOW_W, cfg.WINDOW_H)
+
+
+@check("график статистики: круглая шкала накрывает данные")
+def _(rng):
+    import chart
+    lo = float(rng.uniform(-1e5, 1e5)) * float(rng.choice([1e-4, 1e-2, 1.0]))
+    hi = lo + float(rng.uniform(0.0, 1e5)) * float(rng.choice([1e-4, 1e-2, 1.0]))
+    y0, y1, ticks, step = chart.y_scale(lo, hi)
+    assert y0 <= lo + 1e-9 * max(1.0, abs(lo)) and hi <= y1 + 1e-9 * max(1.0, abs(hi))
+    assert 2 <= len(ticks) <= 7, (lo, hi, ticks)
+    mantissa = step / 10 ** np.floor(np.log10(step))
+    assert any(abs(mantissa - m) < 1e-6 for m in (1, 2, 2.5, 5, 10)), step
+    labels = [chart.tick_text(v, step) for v in ticks]
+    assert len(set(labels)) == len(labels), f"одинаковые подписи делений: {labels}"
+
+
+@check("настройки: что угодно в settings.json не выводит ползунки за пределы")
+def _(rng):
+    import prefs
+    game = the_game()
+    before = prefs.collect(game)
+    junk = {}
+    for key in prefs.SLIDERS + prefs.TOGGLES:
+        options = [None, "x", True, float(rng.uniform(-1e6, 1e6)), int(rng.integers(-1000, 1000)),
+                   float("nan"), float("inf"), [1], {"a": 1}, "сложный", "x20"]
+        junk[key] = options[int(rng.integers(0, len(options)))]
+    try:
+        prefs.apply(game, junk)
+        for key in prefs.SLIDERS:
+            w = game.ui.widgets[key]
+            assert w.lo <= w.value <= w.hi and np.isfinite(w.value), (key, w.value)
+        for key in prefs.TOGGLES:
+            w = game.ui.widgets[key]
+            assert 0 <= w.index < len(w.options), (key, w.index)
+    finally:
+        prefs.apply(game, before)
 
 
 # ---------------------------------------------------------------- прогон
@@ -1433,7 +1502,11 @@ def main():
     ap.add_argument("--heavy", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("-v", "--verbose", action="store_true", help="печатать каждое свойство и его время")
+    ap.add_argument("-k", "--only", metavar="ТЕКСТ",
+                    help="только свойства, в имени которых есть этот текст (для проверки по сломанной версии)")
     args = ap.parse_args()
+    if args.only:
+        CHECKS[:] = [c for c in CHECKS if args.only in c[0]]
     # Вывод по-русски, а в трубе Windows берёт кодовую страницу системы. На английской
     # это cp1252, и первая же строка падает с UnicodeEncodeError - так и вышло на
     # сервере сборки, ещё до первой проверки.
