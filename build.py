@@ -58,6 +58,10 @@ QT_UNUSED = ("Qt6VirtualKeyboard.dll", "Qt6Quick.dll", "Qt6Qml.dll", "Qt6QmlMode
              os.path.join("plugins", "platforms", "qdirect2d.dll"),
              os.path.join("plugins", "platforms", "qminimal.dll"),
              os.path.join("plugins", "multimedia", "ffmpegmediaplugin.dll"))
+# Файлы игрока, которые portable-версия пишет рядом с exe: после пробного запуска из dist
+# они там есть, но в архив попадать не должны.
+PLAYER_FILES = ("settings.json", "window.json", "window.json.tmp", "settings.json.tmp")
+
 # OpenSSL рядом с python*.dll: после исключения ssl и плагинов TLS его никто не грузит.
 OPENSSL_PREFIXES = ("libcrypto-", "libssl-")
 
@@ -146,7 +150,10 @@ def make_portable(folder=None):
     archive = os.path.join(DIST if os.path.isabs(DIST) else os.path.join(ROOT, DIST),
                            f"{APP}-{version()}-portable.zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, _, files in os.walk(folder):
+        for root, dirs, files in os.walk(folder):
+            # Следы пробного запуска из dist (portable пишет рядом с exe) - не в архив.
+            dirs[:] = [d for d in dirs if not (root == folder and d == "saves")]
+            files = [n for n in files if not (root == folder and n in PLAYER_FILES)]
             for name in files:
                 full = os.path.join(root, name)
                 zf.write(full, os.path.join(APP, os.path.relpath(full, folder)))
