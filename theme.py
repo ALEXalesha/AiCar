@@ -33,6 +33,8 @@ QLabel#toast {{ background: rgba(22, 25, 32, 235); color: {GOLD}; border: 1px so
                border-radius: 8px; padding: 8px 14px; font-family: "Consolas", monospace;
                font-size: 15px; }}
 
+QLabel#title {{ font-size: 34pt; font-weight: 700; color: {GOLD}; }}
+QLabel#subtitle {{ color: {MUTED}; font-size: 11pt; }}
 QLabel#screenTitle {{ font-size: 20pt; font-weight: 600; }}
 QLabel#muted {{ color: {MUTED}; }}
 QLabel#section {{ color: {MUTED}; font-size: 9pt; font-weight: 600; letter-spacing: 1px; }}
@@ -48,6 +50,22 @@ QPushButton {{ background: #232835; color: {TEXT}; border: 1px solid #343b4a; bo
 QPushButton:hover {{ background: #2b3242; border-color: #46506a; }}
 QPushButton:pressed {{ background: #1b2029; }}
 QPushButton:focus {{ border-color: {ACCENT}; }}
+QPushButton#primary {{ background: {ACCENT}; color: #07131b; border: none; font-weight: 600; }}
+QPushButton#primary:hover {{ background: #8cd0f0; }}
+QPushButton#primary:pressed {{ background: #5aa6cc; }}
+QPushButton#primary:focus {{ border: 2px solid {GOLD}; }}
+
+QSlider::groove:horizontal {{ height: 6px; background: #2c3240; border-radius: 3px; }}
+QSlider::sub-page:horizontal {{ background: {ACCENT}; border-radius: 3px; }}
+QSlider::handle:horizontal {{ width: 18px; height: 18px; margin: -7px 0; border-radius: 9px;
+                             background: {TEXT}; }}
+QSlider::handle:horizontal:hover {{ background: #ffffff; }}
+
+QComboBox {{ background: #232835; border: 1px solid #343b4a; border-radius: 8px;
+            padding: 6px 12px; min-width: 190px; }}
+QComboBox:hover {{ border-color: #46506a; }}
+QComboBox QAbstractItemView {{ background: #232835; border: 1px solid #343b4a;
+                              selection-background-color: #2d5a78; outline: none; }}
 
 QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

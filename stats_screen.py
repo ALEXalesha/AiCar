@@ -9,13 +9,13 @@
 import statistics
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 import main
 import theme
 from chart import Chart
 from chart import fmt as chart_fmt
+from screens import card, header, label, section
 
 # Замер автора (README): уровень «сложный», двенадцать случайных сидов - доехали десять,
 # медиана 16.5 поколения до финиша.
@@ -29,24 +29,6 @@ TRAINING_H = 290
 TRAINING_EMPTY = ("Кривая обучения появится, когда закончится первый раунд: лучший и средний "
                   "результат каждого поколения. В stats.json до версии 2.0.0 её нет - "
                   "она записывается с 2.0.0.")
-
-
-def label(text="", name=None, wrap=False):
-    lb = QLabel(text)
-    if name:
-        lb.setObjectName(name)
-    lb.setWordWrap(wrap)
-    return lb
-
-
-def section(text):
-    return label(text.upper(), "section", wrap=True)
-
-
-def card():
-    f = QFrame()
-    f.setObjectName("card")
-    return f
 
 
 # --- счёт по записям раундов (чистые функции, без Qt) -------------------------------------
@@ -156,13 +138,8 @@ class StatsScreen(QWidget):
         self.setObjectName("screen")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 22, 28, 16)
-        head = QHBoxLayout()
-        head.addWidget(label("Статистика", "screenTitle"))
-        head.addStretch(1)
-        self.back_button = QPushButton("К игре")
-        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.back_button.clicked.connect(self.back.emit)
-        head.addWidget(self.back_button)
+        # Кнопка возврата - туда, откуда пришли: из меню «В меню», из игры «К игре».
+        head, self.back_button = header("Статистика", "В меню", self.back.emit)
         outer.addLayout(head)
         outer.addSpacing(8)
 

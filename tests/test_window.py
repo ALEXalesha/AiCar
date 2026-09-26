@@ -29,17 +29,15 @@ def win(qapp):
     g = shared_game()
     g.watched = main.WATCH_LEADER
     g.paused = False
-    g.running = True
-    g.want_stats = False
+    g.want_stats = g.want_menu = False
     g.hud_grab = None
     g.message_left = 0
     w = window.MainWindow(g)
     w.show()
-    w.show_game()
+    w.play()
     qapp.processEvents()
     yield w
     w.close()
-    g.running = True
     g.resize(cfg.WINDOW_W, cfg.WINDOW_H)
 
 
@@ -124,7 +122,7 @@ def test_letters_work_on_the_russian_layout():
     event = QKeyEvent(QEvent.Type.KeyPress, 0x041A, Qt.KeyboardModifier.NoModifier, 19, 0x52, 0, "к")
     assert window.key_code(event) == main.KEY_ROUND
     plain = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
-    assert window.key_code(plain) == main.KEY_QUIT
+    assert window.key_code(plain) == main.KEY_MENU
 
 
 def test_a_held_key_does_not_repeat(win):
@@ -134,9 +132,21 @@ def test_a_held_key_does_not_repeat(win):
     assert not g.paused
 
 
-def test_escape_closes_the_window(win):
+def test_escape_in_the_game_goes_to_the_menu(win):
     QTest.keyClick(win.view, Qt.Key.Key_Escape)
-    assert not win.isVisible()
+    assert win.current() is win.menu and win.isVisible()
+    assert not win.view.is_running(), "в меню игра стоит"
+    assert win.menu.play_button.text() == "Продолжить"
+    QTest.mouseClick(win.menu.play_button, Qt.MouseButton.LeftButton)
+    assert win.current() is win.view and win.view.is_running()
+
+
+def test_the_menu_button_on_the_panel_goes_to_the_menu(win):
+    box = win.game.ui.widgets["menu"].rect
+    QTest.mouseClick(win.view, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                     view_point(win, *box.center))
+    QTest.qWait(60)
+    assert win.current() is win.menu
 
 
 def test_a_double_click_on_a_button_counts_twice(win):
@@ -167,9 +177,10 @@ def test_the_stats_button_opens_the_stats_screen_and_back(win):
     QTest.qWait(60)
     assert win.stack.currentWidget() is win.stats_screen
     assert not win.view.is_running(), "игра должна стоять, пока открыта статистика"
+    assert win.stats_screen.back_button.text() == "К игре"
     QTest.mouseClick(win.stats_screen.back_button, Qt.MouseButton.LeftButton)
     assert win.stack.currentWidget() is win.view and win.view.is_running()
-    win.show_stats()
+    win.show_stats(win.view)
     QTest.keyClick(win.stats_screen, Qt.Key.Key_Escape)
     assert win.stack.currentWidget() is win.view
 
@@ -262,7 +273,7 @@ def test_wrapping_labels_are_never_capped_in_height(win):
     g.paused = True
     g.say("сохранения нет или оно не подходит")
     win.view.after_input()
-    for show in (win.show_game, win.show_stats):
+    for show in (win.play, win.show_stats, win.show_menu, win.show_settings):
         show()
         QTest.qWait(10)
         labels = wrapped_labels(win)
@@ -291,20 +302,142 @@ def test_the_message_fits_in_the_smallest_window(win, qapp, scale):
     toast.setStyleSheet("")
 
 
-@pytest.mark.parametrize("scale", [1.0, 1.1])
-def test_stats_screen_text_fits_in_the_smallest_window(win, qapp, scale):
-    win.show_stats()
-    screen = win.stats_screen
+def enlarge(screen, scale):
     for lb in screen.findChildren(QLabel):
         px = lb.font().pixelSize() if lb.font().pixelSize() > 0 else round(lb.font().pointSizeF() * 96 / 72)
         lb.setStyleSheet(f"font-size: {round(px * scale)}px;")
-    win.resize(win.minimumSize())
-    QTest.qWait(30)
+
+
+def text_problems(screen):
+    """Подписи с переносом, которым не хватило высоты, и подписи без переноса, которым -
+    ширины; и подписи, вылезшие за экран (их не видно, хоть они и целы)."""
     clipped = [(lb.text()[:40], lb.height(), lb.heightForWidth(lb.width())) for lb in wrapped_labels(screen)
                if lb.heightForWidth(lb.width()) > lb.height()]
     narrow = [lb.text()[:40] for lb in screen.findChildren(QLabel)
               if lb.isVisible() and not lb.wordWrap() and lb.text()
               and lb.fontMetrics().horizontalAdvance(lb.text().split("\n")[0]) > lb.width() + 1]
+    return clipped + narrow
+
+
+@pytest.mark.parametrize("page", ["stats", "menu", "settings"])
+@pytest.mark.parametrize("scale", [1.0, 1.1])
+def test_screen_text_fits_in_the_smallest_window(win, qapp, scale, page):
+    show, screen = {"stats": (win.show_stats, win.stats_screen), "menu": (win.show_menu, win.menu),
+                    "settings": (win.show_settings, win.settings_screen)}[page]
+    show()
+    enlarge(screen, scale)
+    win.resize(win.minimumSize())
+    QTest.qWait(30)
+    problems = text_problems(screen)
     for lb in screen.findChildren(QLabel):
         lb.setStyleSheet("")
-    assert clipped == [] and narrow == []
+    assert problems == []
+
+
+# --- меню --------------------------------------------------------------------------------------
+
+@pytest.fixture
+def fresh_window(qapp, tmp_path):
+    w = window.MainWindow(main.Game(seed=0, start=False), settings_path=tmp_path / "settings.json")
+    w.show()
+    qapp.processEvents()
+    yield w
+    w.close()
+
+
+def test_the_window_opens_on_the_menu(fresh_window):
+    w = fresh_window
+    assert w.current() is w.menu
+    assert w.menu.play_button.text() == "Играть"
+    assert [b.text() for b in (w.menu.play_button, w.menu.stats_button, w.menu.settings_button,
+                               w.menu.quit_button)] == ["Играть", "Статистика", "Настройки", "Выход"]
+    assert not w.view.is_running() and not w.game.started
+
+
+def test_every_menu_button_opens_its_screen_and_leads_back(fresh_window, monkeypatch):
+    w = fresh_window
+    monkeypatch.setattr(main.track, "evolve_track", lambda rng, width, difficulty: shared_game().track)
+    click = lambda b: QTest.mouseClick(b, Qt.MouseButton.LeftButton)  # noqa: E731
+
+    click(w.menu.stats_button)
+    assert w.current() is w.stats_screen and w.stats_screen.back_button.text() == "В меню"
+    click(w.stats_screen.back_button)
+    assert w.current() is w.menu
+
+    click(w.menu.settings_button)
+    assert w.current() is w.settings_screen
+    click(w.settings_screen.back_button)
+    assert w.current() is w.menu
+    w.show_settings()
+    QTest.keyClick(w.settings_screen, Qt.Key.Key_Escape)
+    assert w.current() is w.menu
+
+    click(w.menu.play_button)
+    assert w.current() is w.view and w.game.started and w.view.is_running()
+    QTest.keyClick(w.view, Qt.Key.Key_Escape)
+    assert w.current() is w.menu
+
+    click(w.menu.quit_button)
+    assert not w.isVisible()
+
+
+def test_the_menu_says_what_the_game_is(fresh_window):
+    text = fresh_window.menu.subtitle.text()
+    for words in ("нейросети", "эволюцией", "поколение за поколением", "на глазах", "Статистика"):
+        assert words in text
+    assert 3 <= text.count(".") + text.count(":") <= 8
+
+
+@pytest.mark.parametrize("scale", [1.0, 1.1])
+def test_the_menu_text_is_fully_visible_in_the_smallest_window(fresh_window, qapp, scale):
+    w = fresh_window
+    enlarge(w.menu, scale)
+    w.resize(w.minimumSize())
+    QTest.qWait(30)
+    about = w.menu.subtitle
+    assert about.maximumHeight() == QWIDGETSIZE_MAX
+    assert about.heightForWidth(about.width()) <= about.height()
+    top_left = about.mapTo(w.menu, QPoint(0, 0))
+    assert top_left.y() >= 0 and top_left.y() + about.height() <= w.menu.height()
+    assert top_left.x() >= 0 and top_left.x() + about.width() <= w.menu.width()
+    lines = about.height() / about.fontMetrics().lineSpacing()
+    assert 3 <= round(lines) <= 6, lines
+    for b in (w.menu.play_button, w.menu.quit_button):
+        at = b.mapTo(w.menu, QPoint(0, 0))
+        assert at.y() + b.height() <= w.menu.height()
+    for lb in w.menu.findChildren(QLabel):
+        lb.setStyleSheet("")
+
+
+def test_settings_change_the_game_and_survive_a_restart(fresh_window, qapp, tmp_path):
+    w = fresh_window
+    s = w.settings_screen
+    w.show_settings()
+    s.sliders["pop_size"][0].setValue(80)
+    s.sliders["volume"][0].setValue(15)
+    s.combos["level"].setCurrentIndex(0)                  # лёгкий
+    s.combos["speed"].setCurrentIndex(2)
+    g = w.game
+    assert g.ui.value("pop_size") == 80 and abs(g.ui.value("volume") - 0.15) < 1e-9
+    assert g.ui.value("level") == "лёгкий" and g.ui.value("width") == main.LEVELS[0][1]
+    assert g.ui.value("speed") == "x20"
+    assert s.values["pop_size"].text() == "80" and s.values["volume"].text() == "15%"
+    QTest.mouseClick(s.back_button, Qt.MouseButton.LeftButton)
+    saved = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    assert saved["pop_size"] == 80 and saved["level"] == "лёгкий" and saved["speed"] == "x20"
+
+    again = window.MainWindow(main.Game(seed=0, start=False), settings_path=tmp_path / "settings.json")
+    assert again.game.ui.value("pop_size") == 80 and again.game.ui.value("level") == "лёгкий"
+    again.show_settings()
+    assert again.settings_screen.combos["speed"].currentIndex() == 2
+    again.close()
+
+
+def test_the_settings_screen_shows_what_the_panel_has(fresh_window):
+    w = fresh_window
+    g = w.game
+    g.ui.widgets["generations"].value = 33
+    g.ui.widgets["replay"].index = 2
+    w.show_settings()
+    assert w.settings_screen.sliders["generations"][0].value() == 33
+    assert w.settings_screen.combos["replay"].currentText() == main.REPLAY_OFF
