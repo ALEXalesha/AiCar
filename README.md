@@ -41,6 +41,18 @@ There are no correct answers to imitate, only a score at the end of a run, so it
 
 **Fitness is the most fragile part of the whole project** - far more fragile than the network. Distance travelled would teach the cars to spin in place; straight-line distance from the start would park them in the first corner. Only checkpoints, placed every 45 pixels along the track, count movement in the right direction. It is exactly the reward hacking seen in large models: the agent optimises the metric you wrote, not the one you meant.
 
+## Menu, statistics, settings
+
+Since 2.0.0 the game opens on a menu: a line about what the project is, then «Играть» (play), «Статистика» (statistics), «Настройки» (settings), «Выход» (quit). Esc in the game, or the «в меню» button on the panel, goes back there; the training waits.
+
+<img src="docs/preview_menu.png" width="700" alt="Start menu">
+
+The statistics screen is built from what the game keeps in `stats.json`: rounds, finishes, generations trained and the lap record in large cards; the drivers' learning curve generation by generation (best and average, with the last value in the corner) across the full width; generations to finish, finish time and how far the best car got, round by round; tables by level and by track generator; and a comparison with the author's benchmark on the `сложный` level, green where you do at least as well.
+
+<img src="docs/preview_stats.png" width="900" alt="Statistics: the drivers' learning curve of the last round">
+
+A `stats.json` from 1.1.0 still loads: its counters and the "generations to finish" chart are shown as before, and everything that 1.1.0 did not record starts being recorded now. The settings screen holds the panel's values with explanations, and all panel settings now survive a restart (`settings.json` next to the saves).
+
 ## In numbers
 
 Across twelve random seeds on the `сложный` (hard) level: ten of twelve finish, median 16.5 generations, and not one random brain completes a lap straight away. One generation without graphics takes 0.27 s.
@@ -53,10 +65,19 @@ Fifty cars are not fifty objects but arrays of shape `(50, …)`. Physics, senso
 
 The sensors deserve their own note. Done naively that is 50 cars × 7 rays × 720 wall segments - 252 000 intersection tests per physics step, 450 million per generation. Instead a distance field of the track is built once, and a ray does not intersect anything: it steps along the grid and reads values. The same grid gives collision detection for free.
 
+**Drawing.** Since 2.0.0 the window is Qt (PySide6) instead of pygame, and everything is antialiased. It is still faster: the track is drawn once into a pixmap and then only copied; each car is its polygons in its own coordinates, placed on screen by one matrix instead of recomputing points; the panel's widgets are drawn into a pixmap that is redrawn only when something in them changes. One frame - track, 50 cars (ten of them wrecked), the watched car's rays and telemetry, the panel with its chart - measured with `tools/bench_frame.py` on the same scenario and the same machine:
+
+| | frame (mean) |
+| --- | --- |
+| pygame 1.1.0, into memory | 5.7-6.9 ms |
+| pygame 1.1.0, real window with `flip` | 5.6-7.4 ms |
+| **Qt 2.0.0**, into memory, antialiased | **3.4 ms** |
+| **Qt 2.0.0**, real window: `paintEvent` / with output to screen | **3.2 / 3.7 ms** |
+
 ## Running it
 
 ```bash
-pip install numpy pygame
+pip install numpy PySide6
 python main.py
 ```
 
@@ -66,7 +87,7 @@ Training without graphics, in the console:
 python train.py --seed 3 --generations 60
 ```
 
-Ready Windows builds - installer and portable - are on the [releases page](https://github.com/ALEXalesha/AiCar/releases/latest); Python, numpy and pygame are inside, nothing else is needed.
+Ready Windows builds - installer and portable - are on the [releases page](https://github.com/ALEXalesha/AiCar/releases/latest); Python, numpy and Qt are inside, nothing else is needed. The window can be resized and maximised (the smallest size fits a 1024×768 screen) and reopens where it was closed.
 
 ## Tests
 
@@ -74,7 +95,7 @@ Ready Windows builds - installer and portable - are on the [releases page](https
 python -m pytest
 ```
 
-285 tests, about two minutes - everything that can be checked without a window: track geometry, the distance field, sensors, physics, checkpoints, fitness, the genetic algorithm, widget logic, sound synthesis, saves. One test does open a real window, twice: the game window opens where it was closed (`window.json` in the data folder), and that can only be checked against Windows itself.
+441 tests, about two and a half minutes. The game logic - track geometry, the distance field, sensors, physics, checkpoints, fitness, the genetic algorithm, sound synthesis, saves - and the window: Qt without a screen (`QT_QPA_PLATFORM=offscreen`, Windows fonts via `QT_QPA_FONTDIR`), one `QApplication` per run, no pytest-qt. The window laws include the ones from the author's other Qt games: a wrapping caption is never capped in height, every caption fits in the smallest window even with text 10% wider, the window fits a 1024×768 screen. Saves, statistics and the window position written by 1.1.0 are checked against files written by the 1.1.0 code itself. One test opens a real window twice: the window reopens where it was closed (`window.json` in the data folder), and that can only be checked against Windows itself.
 
 Beside them is a sweep of invariants over random data:
 
@@ -82,25 +103,27 @@ Beside them is a sweep of invariants over random data:
 python stress.py --rounds 10
 ```
 
-98 properties that must hold for any input, each run hundreds of times on random cases - 8851 checks per round. Ten rounds take about thirteen minutes and one just over a minute; CI runs one round together with the tests after every push, and the script exits non-zero on any violation. Three of them drive the real game for hundreds of frames, pressing keys at random, and verify the invariants after every frame. One is checked pixel by pixel: the telemetry box is drawn over a flat background, and afterwards nothing may be painted outside its bounds - so it catches any overflow rather than the one the author had in mind.
+101 properties that must hold for any input, each run hundreds of times on random cases - 9211 checks per round, one round in about 80 seconds; CI runs one round together with the tests after every push, and the script exits non-zero on any violation. Three of them drive the real game for hundreds of frames, pressing keys, dragging the mouse and resizing the window at random, and verify the invariants after every frame. Several are checked pixel by pixel: the telemetry box is drawn over a flat background, and afterwards nothing may be painted outside its bounds - so it catches any overflow rather than the one the author had in mind.
 
-Two sweeps, 127 360 checks, two findings. One property was simply formulated wrong: `the contour is closed` in fact compared the step at the seam against an ordinary step and called a sixfold excess a violation - that is a smoothness check with a threshold pulled out of thin air. The other finding was a real bug: the summary line ran off the panel at six-digit counters, because the test guarding its width counted characters, and the font is proportional.
+Every new property and window law was also run against a deliberately broken version (no clipping of the field, the telemetry frame half a pixel outside, a one-line height cap on the message, the old 1280×720 minimum, the 1.1.0 window file not converted, no crossfade in the engine sound, and more) - each break was caught.
 
-**Where this stops working.** The four bugs found last were found by playing and looking at the screen. The line did not overflow - it was truncated. The text did not leave the panel - it was painted over. The leader really was the best car; it had just crashed, and the camera stayed on the wreck while two cars were still driving. The round counter really did only grow - by one extra round every time `load` was pressed. Every contract was honoured and the result was still wrong. A property guards a contract; it does not catch "the code honours the contract, but the contract is not the right one". All of it is written up in [docs/bug-hunt.md](docs/bug-hunt.md).
+**Where this stops working.** The four bugs found last before 2.0.0 were found by playing and looking at the screen. The line did not overflow - it was truncated. The text did not leave the panel - it was painted over. The leader really was the best car; it had just crashed, and the camera stayed on the wreck while two cars were still driving. The round counter really did only grow - by one extra round every time `load` was pressed. Every contract was honoured and the result was still wrong. A property guards a contract; it does not catch "the code honours the contract, but the contract is not the right one". All of it is written up in [docs/bug-hunt.md](docs/bug-hunt.md).
 
 ## Preview frames are generated
 
-`tools/make_previews.py` runs the game with no window - the same way its own self-check does: SDL's dummy driver renders into an in-memory surface, and the frame is taken straight from it.
+`tools/make_previews.py` runs the game with no window on screen - the same way its own self-check does: Qt's offscreen platform paints into an image in memory, and the frame is taken straight from the window (`widget.grab()`) or from the game's own drawing.
 
 ```bash
 python tools\make_previews.py
 ```
 
-A screen grab would be wrong twice over. A window that just opened can sit behind others, and then the shot catches someone else's content. More importantly, the moment cannot be caught by hand: the frame where part of the generation already lies grey in one corner lasts a fraction of a second. The script looks for it by the state of the race rather than by frame number, and with a fixed seed it reproduces run after run.
+A screen grab would be wrong twice over. A window that just opened can sit behind others, and then the shot catches someone else's content. More importantly, the moment cannot be caught by hand: the frame where part of the generation already lies grey in one corner lasts a fraction of a second. The script looks for it by the state of the race rather than by frame number, and with a fixed seed it reproduces run after run. The statistics on the frames come from rounds played by the script itself in a temporary folder, not from anyone's personal statistics.
 
 ## Stack
 
-Python · NumPy · pygame · PyTorch (only to train the track VAE) · PyInstaller · NSIS
+Python · NumPy · PySide6 (Qt 6: QPainter, QtMultimedia) · PyTorch (only to train the track VAE) · PyInstaller · NSIS
+
+Changes by version: [CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 
