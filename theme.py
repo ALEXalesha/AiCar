@@ -64,6 +64,11 @@ QSlider::handle:horizontal:hover {{ background: #ffffff; }}
 QComboBox {{ background: #232835; border: 1px solid #343b4a; border-radius: 8px;
             padding: 6px 12px; min-width: 190px; }}
 QComboBox:hover {{ border-color: #46506a; }}
+/* Кнопка раскрытия - часть поля, а не квадрат Fusion со своей тенью поверх скругления
+   («кнопка квадратная и торчит», Алексей, 26.09.2026). Стрелку рисует screens.Combo. */
+QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right; width: 24px;
+                       border: none; background: transparent; }}
+QComboBox::down-arrow {{ image: none; width: 0; height: 0; border: none; }}
 QComboBox QAbstractItemView {{ background: #232835; border: 1px solid #343b4a;
                               selection-background-color: #2d5a78; outline: none; }}
 

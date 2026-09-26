@@ -1,7 +1,7 @@
 Unicode true
 
 !define APP "AiCar"
-!define VERSION "2.0.0"
+!define VERSION "2.0.1"
 !define PUBLISHER "ALEXaloysha"
 !define REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP}"
 
