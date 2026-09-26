@@ -605,7 +605,11 @@ def selftest(report_path, frames=400):
     audio = sound.SoundBank(volume=0.0)           # настоящее устройство, если есть, но молча
     game = Game(seed=0, audio=audio)
     win = window.MainWindow(game)
+    win.show()                                    # offscreen: окно есть, экрана нет
     win.resize(cfg.WINDOW_W, cfg.WINDOW_H)
+    win.play()
+    win.view.stop()                               # кадры крутит сама самопроверка, без таймера
+    offscreen.app().processEvents()
     game.ui.widgets["speed"].index = 2
     paint_ms = []
     for n in range(frames):
@@ -660,8 +664,15 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.selftest:
-        for line in selftest(args.selftest):
-            print(line)
+        lines = selftest(args.selftest)
+        # У собранной игры без консоли stdout нет вовсе, а в консоли Windows - своя кодировка:
+        # отчёт в любом случае в файле, сюда - если есть куда.
+        if sys.stdout is not None:
+            try:
+                sys.stdout.reconfigure(encoding="utf-8")
+            except (AttributeError, ValueError):
+                pass
+            print("\n".join(lines))
         return 0
 
     if sys.platform == "win32":
