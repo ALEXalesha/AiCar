@@ -1,6 +1,8 @@
 import os
 import sys
 
+import pytest
+
 import config as cfg
 import paths
 
@@ -53,11 +55,13 @@ def test_frozen_resources_come_from_the_bundle(tmp_path, monkeypatch):
     assert paths.resource_dir() == str(tmp_path / "bundle")
 
 
+@pytest.mark.real_config
 def test_config_paths_are_absolute():
     for path in (cfg.SAVE_DIR, cfg.BRAIN_FILE, cfg.STATS_FILE, cfg.DATASET_FILE, cfg.MODEL_FILE):
         assert os.path.isabs(path)
 
 
+@pytest.mark.real_config
 def test_saves_are_separate_from_bundled_resources():
     assert cfg.MODEL_FILE.startswith(paths.resource_dir())
     assert cfg.BRAIN_FILE.startswith(paths.data_dir())

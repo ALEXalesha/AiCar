@@ -7,7 +7,38 @@ import numpy as np
 import brain
 import config as cfg
 
-EMPTY = {"rounds": 0, "finished": 0, "generations": 0, "best_time": None, "gens_to_finish": []}
+# log и last_curve копятся с 2.0.0 для экрана статистики. В stats.json 1.1.0 их нет -
+# такой файл читается как раньше, а они берутся пустыми.
+EMPTY = {"rounds": 0, "finished": 0, "generations": 0, "best_time": None, "gens_to_finish": [],
+         "log": [], "last_curve": {"best": [], "mean": []}}
+LOG_LIMIT = 300
+
+
+def _empty():
+    """Свежая копия EMPTY: списки в ней свои, общий EMPTY никто не испортит."""
+    return {**EMPTY, "gens_to_finish": [], "log": [], "last_curve": {"best": [], "mean": []}}
+
+
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _clean(totals):
+    """Что пришло из файла - к ожидаемым типам. Мусорный ключ - как в пустом файле."""
+    fresh = _empty()
+    for key in ("rounds", "finished", "generations"):
+        if not (isinstance(totals[key], int) and not isinstance(totals[key], bool)):
+            totals[key] = fresh[key]
+    if totals["best_time"] is not None and not _number(totals["best_time"]):
+        totals["best_time"] = None
+    if not isinstance(totals["gens_to_finish"], list):
+        totals["gens_to_finish"] = []
+    log = totals["log"]
+    totals["log"] = [e for e in log if isinstance(e, dict)][-LOG_LIMIT:] if isinstance(log, list) else []
+    curve = totals["last_curve"]
+    if not (isinstance(curve, dict) and all(isinstance(curve.get(k), list) for k in ("best", "mean"))):
+        totals["last_curve"] = fresh["last_curve"]
+    return totals
 
 
 def _ensure_dir(path):
@@ -64,13 +95,13 @@ def load_totals(path=None):
     try:
         with open(path, encoding="utf-8") as f:
             saved = json.load(f)
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return dict(EMPTY)
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        return _empty()
     if not isinstance(saved, dict):
-        return dict(EMPTY)
-    totals = dict(EMPTY)
+        return _empty()
+    totals = _empty()
     totals.update({k: v for k, v in saved.items() if k in EMPTY})
-    return totals
+    return _clean(totals)
 
 
 def save_totals(totals, path=None):
@@ -81,7 +112,10 @@ def save_totals(totals, path=None):
     return path
 
 
-def record_round(totals, history):
+def record_round(totals, history, info=None):
+    """Итоги после раунда. Без info - ровно как в 1.1.0. С info (что было в раунде: уровень,
+    генератор, трасса, машинка, доля трассы у лучшего - main.Game.round_info) ещё запись
+    в log и кривая обучения раунда в last_curve - для экрана статистики."""
     totals = dict(totals)
     if not history:
         return totals
@@ -94,6 +128,13 @@ def record_round(totals, history):
         totals["gens_to_finish"] = totals["gens_to_finish"] + [len(history)]
         if totals["best_time"] is None or last.best_time < totals["best_time"]:
             totals["best_time"] = last.best_time
+    if info is not None:
+        entry = dict(info)
+        entry.update(n=totals["rounds"], gens=len(history), finished=bool(last.finished),
+                     time=round(float(last.best_time), 2) if last.finished else None)
+        totals["log"] = (list(totals.get("log", [])) + [entry])[-LOG_LIMIT:]
+        totals["last_curve"] = {"best": [round(float(s.best), 1) for s in history],
+                                "mean": [round(float(s.mean), 1) for s in history]}
     return totals
 
 

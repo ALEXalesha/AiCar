@@ -1,6 +1,4 @@
 import numpy as np
-import pygame
-import pytest
 
 import config as cfg
 import sound
@@ -80,45 +78,154 @@ def test_fit_channels_doubles_a_mono_sample_for_stereo():
     assert np.array_equal(stereo[:, 0], mono) and np.array_equal(stereo[:, 1], mono)
 
 
-def test_soundbank_works_on_a_stereo_mixer():
-    pygame.mixer.quit()
-    pygame.mixer.init(frequency=44100, size=-16, channels=2)
-    bank = sound.SoundBank(0.4)
-    assert bank.enabled, bank.reason
-    assert bank.channels == 2 and bank.rate == 44100
-    assert len(bank.engine) == cfg.ENGINE_LEVELS
+# --- SoundBank на QAudioSink (2.0.0) ----------------------------------------------------
+
+class FakeSink:
+    """Устройство, которое открылось в своём формате и принимает байты."""
+
+    def __init__(self, rate, channels, buffer_ms=250):
+        self.rate, self.channels = rate, channels
+        self.size = int(rate * channels * 2 * buffer_ms / 1000)
+        self.queued = 0
+        self.stopped = False
+
+    def bufferSize(self):
+        return self.size
+
+    def bytesFree(self):
+        return self.size - self.queued
+
+    def stop(self):
+        self.stopped = True
 
 
-def test_soundbank_always_matches_the_real_mixer_format():
-    for rate, asked in ((22050, 1), (44100, 2), (48000, 2)):
-        pygame.mixer.quit()
-        pygame.mixer.init(frequency=rate, size=-16, channels=asked)
-        real_rate, _, real_channels = pygame.mixer.get_init()
-        bank = sound.SoundBank(0.4)
+class FakeIO:
+    def __init__(self, sink):
+        self.sink = sink
+        self.data = b""
+
+    def write(self, data):
+        self.data += data
+        self.sink.queued += len(data)
+        return len(data)
+
+
+def fake_bank(monkeypatch, rate=48000, channels=2, volume=0.4):
+    sink = FakeSink(rate, channels)
+    io = FakeIO(sink)
+    monkeypatch.setattr(sound, "open_sink", lambda: (sink, io, rate, channels))
+    return sound.SoundBank(volume), sink, io
+
+
+def test_soundbank_always_matches_the_opened_device_format(monkeypatch):
+    """Формат берётся у открытого устройства, а не тот, что просили (в 1.0 pygame открыл
+    стерео на просьбу о моно, и мотор молчал)."""
+    for rate, channels in ((22050, 1), (44100, 2), (48000, 2)):
+        bank, _, _ = fake_bank(monkeypatch, rate, channels)
         assert bank.enabled, bank.reason
-        assert (bank.rate, bank.channels) == (real_rate, abs(real_channels))
+        assert (bank.rate, bank.channels) == (rate, channels)
+        assert bank.mixer.rate == rate
+        assert len(bank.engine) == cfg.ENGINE_LEVELS
 
 
-def test_soundbank_survives_a_missing_audio_device(monkeypatch):
-    def refuse(*args, **kwargs):
-        raise pygame.error("нет аудиоустройства")
+def test_pump_keeps_the_device_a_little_ahead(monkeypatch):
+    bank, sink, io = fake_bank(monkeypatch, 48000, 2)
+    bank.update(150.0, 200.0)
+    written = bank.pump()
+    assert written == int(48000 * sound.AHEAD_MS / 1000)
+    assert len(io.data) == written * 2 * 2                      # стерео, 16 бит
+    assert bank.pump() == 0                                     # наперёд уже есть
+    sink.queued -= 48000 * 2 * 2 // 100                         # устройство сыграло 10 мс
+    assert bank.pump() == 480
 
-    monkeypatch.setattr(pygame.mixer, "init", refuse)
-    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
+
+def test_stereo_output_repeats_the_mono_mix(monkeypatch):
+    bank, _, io = fake_bank(monkeypatch, 44100, 2)
+    bank.update(200.0, 200.0)
+    bank.pump()
+    frames = np.frombuffer(io.data, np.int16).reshape(-1, 2)
+    assert np.array_equal(frames[:, 0], frames[:, 1]) and np.abs(frames).max() > 0
+
+
+def test_the_engine_level_follows_the_speed(monkeypatch):
+    bank, _, _ = fake_bank(monkeypatch)
+    bank.update(0.0, 200.0)
+    assert bank.level == 0 and bank.mixer.level == 0
+    bank.update(200.0, 200.0)
+    assert bank.level == cfg.ENGINE_LEVELS - 1
+    bank.stop()
+    assert bank.level == -1 and bank.mixer.level == -1
+
+
+def test_zero_volume_stops_the_engine(monkeypatch):
+    bank, _, _ = fake_bank(monkeypatch, volume=0.0)
+    bank.update(150.0, 200.0)
+    bank.play_crash()
+    assert bank.mixer.level == -1 and bank.mixer.effects == []
+
+
+def test_a_dead_device_turns_the_sound_off_instead_of_crashing(monkeypatch):
+    bank, sink, io = fake_bank(monkeypatch)
+
+    def gone(data):
+        raise OSError("устройство отключили")
+
+    io.write = gone
+    bank.update(150.0, 200.0)
+    assert bank.pump() == 0
+    assert not bank.enabled and "отключили" in bank.reason and sink.stopped
+    bank.pump()
+    bank.play_crash()
+
+
+def test_soundbank_survives_a_missing_audio_device(monkeypatch, qapp):
+    from PySide6.QtMultimedia import QAudioDevice, QMediaDevices
+    monkeypatch.setattr(QMediaDevices, "defaultAudioOutput", staticmethod(lambda: QAudioDevice()))
     bank = sound.SoundBank()
     assert not bank.enabled
-    assert bank.reason
+    assert "нет устройства" in bank.reason
     bank.update(100.0, 200.0)
     bank.play_crash()
     bank.play_finish()
     bank.set_volume(0.5)
     bank.stop()
+    assert bank.pump() == 0
 
 
-def test_volume_is_clamped(monkeypatch):
-    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
-    monkeypatch.setattr(pygame.mixer, "init", lambda *a, **k: (_ for _ in ()).throw(pygame.error("нет")))
+def test_soundbank_survives_any_error_while_opening(monkeypatch):
+    def refuse():
+        raise RuntimeError("нет QtMultimedia")
+
+    monkeypatch.setattr(sound, "open_sink", refuse)
     bank = sound.SoundBank()
+    assert not bank.enabled and bank.reason == "нет QtMultimedia"
+
+
+def test_a_switched_off_bank_does_nothing(qapp):
+    bank = sound.SoundBank(enabled=False)
+    assert not bank.enabled and bank.engine == []
+    bank.update(100.0, 200.0)
+    bank.play_crash()
+    assert bank.pump() == 0
+    bank.close()
+
+
+def test_the_real_device_never_raises(qapp):
+    """Есть звуковая карта или нет - не падает; если открылась, формат - 16 бит от устройства."""
+    bank = sound.SoundBank(volume=0.0)
+    try:
+        bank.update(120.0, 200.0)
+        bank.pump()
+        if bank.enabled:
+            assert bank.rate > 0 and bank.channels in (1, 2)
+            assert bank.sink.format().sampleRate() == bank.rate
+    finally:
+        bank.close()
+    assert not bank.enabled
+
+
+def test_volume_is_clamped():
+    bank = sound.SoundBank(enabled=False)
     bank.set_volume(5.0)
     assert bank.volume == 1.0
     bank.set_volume(-1.0)
