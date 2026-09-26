@@ -1,4 +1,4 @@
-"""Сборка (build.py, installer.nsi): версия 2.0.0, PySide6 вместо pygame, лишний Qt - вон."""
+"""Сборка (build.py, installer.nsi): версия 2.0.1, PySide6 вместо pygame, лишний Qt - вон."""
 import os
 import re
 
@@ -14,9 +14,9 @@ def nsi():
         return f.read()
 
 
-def test_the_version_is_2_0_0():
+def test_the_version_is_2_0_1():
     # окно переехало с pygame на Qt - смена движка окна, версия мажорная
-    assert build.version() == "2.0.0"
+    assert build.version() == "2.0.1"
 
 
 def test_installer_registers_under_the_app_name_in_russian():
@@ -100,4 +100,4 @@ def test_portable_marker_and_docs_go_into_the_archive(tmp_path, monkeypatch):
     assert {"AiCar/AiCar.exe", "AiCar/portable.txt", "AiCar/README.md", "AiCar/README.ru.md",
             "AiCar/LICENSE"} <= names
     assert not any(n.endswith(("settings.json", "window.json")) or "/saves/" in n for n in names), names
-    assert os.path.basename(archive) == "AiCar-2.0.0-portable.zip"
+    assert os.path.basename(archive) == "AiCar-2.0.1-portable.zip"

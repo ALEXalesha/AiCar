@@ -78,6 +78,24 @@ def header(title, back_text, back):
 
 # --- меню ------------------------------------------------------------------------------------
 
+class Combo(QComboBox):
+    """Выпадающий список со своей стрелкой. Кнопка раскрытия в QSS прозрачная (квадрат
+    Fusion торчал за скругление поля), а нарисовать треугольник средствами QSS Qt не
+    умеет - только картинкой; картинка в сборке - лишний файл, стрелка проще кодом."""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(theme.MUTED if not self.isEnabled() else "#9aa3b5"))
+        cx, cy = self.width() - 16, self.height() / 2
+        up = self.view().isVisible()
+        d = -1 if up else 1
+        p.drawPolygon([QPointF(cx - 5, cy - 3 * d), QPointF(cx + 5, cy - 3 * d), QPointF(cx, cy + 3 * d)])
+        p.end()
+
+
 class Logo(QWidget):
     """Картинка над названием: кусок трассы, три машинки, у лидера лучи датчиков и кольцо -
     нарисовано тем же кодом, что и сама игра."""
@@ -242,7 +260,7 @@ class SettingsScreen(QWidget):
                 value.setMinimumWidth(70)
                 self.values[key] = value
             else:
-                widget = QComboBox()
+                widget = Combo()
                 widget.addItems([str(o) for o in options])
                 widget.currentIndexChanged.connect(lambda i, k=key: self._choose(k, i))
                 self.combos[key] = widget
