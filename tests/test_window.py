@@ -345,6 +345,15 @@ def fresh_window(qapp, tmp_path):
     w.close()
 
 
+def test_opening_the_window_writes_nothing(qapp, tmp_path):
+    """Запуск ничего не меняет на диске, пока игрок ничего не поменял."""
+    w = window.MainWindow(main.Game(seed=0, start=False), settings_path=tmp_path / "settings.json")
+    assert w.current() is w.menu
+    assert not (tmp_path / "settings.json").exists()
+    w.close()
+    assert (tmp_path / "settings.json").exists()        # а при закрытии - пишет
+
+
 def test_the_window_opens_on_the_menu(fresh_window):
     w = fresh_window
     assert w.current() is w.menu

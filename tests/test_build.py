@@ -88,10 +88,16 @@ def test_portable_marker_and_docs_go_into_the_archive(tmp_path, monkeypatch):
     folder = tmp_path / "AiCar"
     folder.mkdir()
     (folder / "AiCar.exe").write_bytes(b"MZ")
+    # следы пробного запуска portable-версии из dist - в архив не идут
+    (folder / "settings.json").write_text("{}", encoding="utf-8")
+    (folder / "window.json").write_text("{}", encoding="utf-8")
+    (folder / "saves").mkdir()
+    (folder / "saves" / "stats.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(build, "DIST", str(tmp_path))
     archive = build.make_portable(str(folder))
     import zipfile
     names = set(zipfile.ZipFile(archive).namelist())
     assert {"AiCar/AiCar.exe", "AiCar/portable.txt", "AiCar/README.md", "AiCar/README.ru.md",
             "AiCar/LICENSE"} <= names
+    assert not any(n.endswith(("settings.json", "window.json")) or "/saves/" in n for n in names), names
     assert os.path.basename(archive) == "AiCar-2.0.0-portable.zip"

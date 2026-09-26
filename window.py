@@ -242,7 +242,11 @@ class MainWindow(QMainWindow):
             self.remember = window_state.Remember(
                 self, window_path, {"width": cfg.WINDOW_W, "height": cfg.WINDOW_H,
                                     "minWidth": main.MIN_W, "minHeight": main.MIN_H})
-        self.show_menu()
+        # Открывается меню, но настройки при этом не пишутся: запуск ничего не меняет на
+        # диске, пока игрок ничего не поменял (show_menu пишет - при возврате в меню).
+        self.menu.set_info(game)
+        self.stack.setCurrentWidget(self.menu)
+        self.menu.play_button.setFocus()
 
     def show_window(self):
         if self.remember is not None:
