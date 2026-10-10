@@ -77,7 +77,7 @@ dist\AiCar\AiCar.exe --selftest C:\путь\отчёт.txt
 
 ```
 запуск из архива: True
-папка данных:     C:\Users\you\AiCar\dist\AiCar
+папка данных:     C:\Users\<you>\AiCar\dist\AiCar
 модель трасс:     есть (...\_internal\models\track_vae.npz)
 звук:             есть
 формат звука:     48000 Гц, каналов 2 (QtMultimedia, int16)
