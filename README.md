@@ -14,6 +14,9 @@
 
 </div>
 
+[![Built with Claude Code](https://img.shields.io/badge/Built_with-Claude_Code-D97757?logo=claude&logoColor=white)](https://claude.com/claude-code)
+Code, tests and docs are written by Claude (Anthropic) in Claude Code. Ideas, testing and decisions - Alexey.
+
 > **The interface is in Russian**, and so is the long write-up - [README.ru.md](README.ru.md), which this file summarises. In the screenshot, "обучение" means training, "живых 41/50" is how many cars are still alive, and "поколение 4" is the generation number.
 
 ## Three networks, three different jobs
