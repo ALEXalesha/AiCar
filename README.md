@@ -6,16 +6,13 @@
 
 [Download for Windows](https://github.com/ALEXalesha/AiCar/releases/latest) &nbsp;·&nbsp; [Русская версия этого файла](README.ru.md)
 
-[![CI](https://github.com/ALEXalesha/AiCar/actions/workflows/ci.yml/badge.svg)](https://github.com/ALEXalesha/AiCar/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/ALEXalesha/AiCar?color=16a34a)](https://github.com/ALEXalesha/AiCar/releases/latest)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Status](https://img.shields.io/badge/status-stable-brightgreen)](#) [![Release](https://img.shields.io/github/v/release/ALEXalesha/AiCar?color=16a34a)](https://github.com/ALEXalesha/AiCar/releases/latest) [![CI](https://github.com/ALEXalesha/AiCar/actions/workflows/ci.yml/badge.svg)](https://github.com/ALEXalesha/AiCar/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![PySide6](https://img.shields.io/badge/PySide6-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/) [![Built with Claude Code](https://img.shields.io/badge/Built_with-Claude_Code-D97757?logo=claude&logoColor=white)](https://claude.com/claude-code)
+
+Code, tests and docs are written by Claude (Anthropic) in Claude Code. Ideas, testing and decisions - Alexey.
 
 <img src="docs/preview_game.png" width="900" alt="Training: 41 of 50 cars still alive">
 
 </div>
-
-[![Built with Claude Code](https://img.shields.io/badge/Built_with-Claude_Code-D97757?logo=claude&logoColor=white)](https://claude.com/claude-code)
-Code, tests and docs are written by Claude (Anthropic) in Claude Code. Ideas, testing and decisions - Alexey.
 
 > **The interface is in Russian**, and so is the long write-up - [README.ru.md](README.ru.md), which this file summarises. In the screenshot, "обучение" means training, "живых 41/50" is how many cars are still alive, and "поколение 4" is the generation number.
 
